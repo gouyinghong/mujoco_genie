@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+
+.venv/
+venv/
+
+.vscode/
+
+*.log
+
+data/
+outputs/
+
+.env
