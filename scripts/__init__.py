@@ -1,1 +1,1 @@
-"""Utilities for converting and replaying the G1 retargeted trajectories."""
+"""Utilities for converting and replaying trajectories on the A2D robot."""

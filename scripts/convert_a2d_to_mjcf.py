@@ -17,7 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.convert_g1_to_mjcf import (
+from scripts.mjcf_utils import (
     ConversionResult,
     _augment_for_replay,
     _install_mujoco_compiler_options,
@@ -85,11 +85,7 @@ def convert_a2d_urdf_to_mjcf(
 
     mjcf_root = ET.fromstring(spec.to_xml())
     _rewrite_mesh_paths(mjcf_root, urdf_path.parent, output_path.parent)
-    _augment_for_replay(
-        mjcf_root,
-        eef_body_names=("Link7_l", "Link7_r"),
-        gripper_mimic_constraints=(),
-    )
+    _augment_for_replay(mjcf_root)
     ET.indent(mjcf_root, space="  ")
     xml_bytes = ET.tostring(mjcf_root, encoding="utf-8", xml_declaration=True)
 
