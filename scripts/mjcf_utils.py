@@ -133,8 +133,143 @@ def _rewrite_mesh_paths(
         mesh.set("file", Path(relative_path).as_posix())
 
 
-def _augment_for_replay(mjcf_root: ET.Element) -> None:
-    """Add the floor, lighting, A2D EEF sites and target mocap bodies."""
+def _add_table(worldbody: ET.Element) -> None:
+    """Add a 1.4 x 0.9 x 0.8 m white table in front of the robot."""
+
+    table = ET.SubElement(
+        worldbody,
+        "body",
+        {"name": "table", "pos": "0.90 0 0"},
+    )
+    ET.SubElement(
+        table,
+        "geom",
+        {
+            "name": "table_top",
+            "type": "box",
+            "pos": "0 0 0.77",
+            "size": "0.45 0.70 0.03",
+            "rgba": "0.92 0.92 0.92 1",
+            "group": "2",
+            "friction": "1 0.01 0.001",
+        },
+    )
+    for index, (x, y) in enumerate(
+        (
+            (-0.37, -0.62),
+            (-0.37, 0.62),
+            (0.37, -0.62),
+            (0.37, 0.62),
+        )
+    ):
+        ET.SubElement(
+            table,
+            "geom",
+            {
+                "name": f"table_leg_{index}",
+                "type": "box",
+                "pos": f"{x} {y} 0.37",
+                "size": "0.04 0.04 0.37",
+                "rgba": "0.92 0.92 0.92 1",
+                "group": "2",
+                "friction": "1 0.01 0.001",
+            },
+        )
+
+
+def _add_dice(
+    mjcf_root: ET.Element,
+    worldbody: ET.Element,
+    asset_root: Path,
+    output_directory: Path,
+) -> None:
+    """Add the textured dice as a free body resting on the table."""
+
+    mesh_path = asset_root / "dice_final.obj"
+    texture_path = asset_root / "dice_texture.png"
+    for path in (mesh_path, texture_path):
+        if not path.is_file():
+            raise FileNotFoundError(f"Dice asset does not exist: {path}")
+
+    asset = mjcf_root.find("asset")
+    if asset is None:
+        raise ValueError("Converted MJCF does not contain an asset section")
+
+    relative_mesh_path = os.path.relpath(mesh_path.resolve(), output_directory.resolve())
+    relative_texture_path = os.path.relpath(
+        texture_path.resolve(), output_directory.resolve()
+    )
+    ET.SubElement(
+        asset,
+        "texture",
+        {
+            "name": "dice_texture",
+            "type": "2d",
+            "file": Path(relative_texture_path).as_posix(),
+        },
+    )
+    ET.SubElement(
+        asset,
+        "material",
+        {
+            "name": "dice_material",
+            "texture": "dice_texture",
+            "specular": "0.3",
+            "shininess": "0.2",
+        },
+    )
+    ET.SubElement(
+        asset,
+        "mesh",
+        {
+            "name": "dice_mesh",
+            "file": Path(relative_mesh_path).as_posix(),
+        },
+    )
+
+    dice = ET.SubElement(
+        worldbody,
+        "body",
+        {"name": "dice", "pos": "0.75 0 0.8248"},
+    )
+    ET.SubElement(dice, "freejoint", {"name": "dice_free_joint"})
+    ET.SubElement(
+        dice,
+        "geom",
+        {
+            "name": "dice_visual",
+            "type": "mesh",
+            "mesh": "dice_mesh",
+            "material": "dice_material",
+            "contype": "0",
+            "conaffinity": "0",
+            "density": "0",
+            "group": "2",
+        },
+    )
+    ET.SubElement(
+        dice,
+        "geom",
+        {
+            "name": "dice_collision",
+            "type": "box",
+            "size": "0.0248 0.0248 0.0248",
+            "density": "100",
+            "rgba": "0 0 0 0",
+            "group": "3",
+            "friction": "1 0.01 0.001",
+        },
+    )
+
+
+def _augment_for_replay(
+    mjcf_root: ET.Element,
+    *,
+    include_table: bool = True,
+    dice_asset_root: Path | None = None,
+    output_directory: Path | None = None,
+) -> None:
+    """Add the scene, A2D EEF sites, and target mocap bodies."""
 
     option = mjcf_root.find("option")
     if option is None:
@@ -170,6 +305,12 @@ def _augment_for_replay(mjcf_root: ET.Element) -> None:
     worldbody = mjcf_root.find("worldbody")
     if worldbody is None:
         raise ValueError("Converted MJCF does not contain a worldbody")
+
+    if include_table:
+        _add_table(worldbody)
+        if dice_asset_root is None or output_directory is None:
+            raise ValueError("Dice asset and output paths are required with the table")
+        _add_dice(mjcf_root, worldbody, dice_asset_root, output_directory)
 
     ET.SubElement(
         worldbody,

@@ -24,6 +24,7 @@ from scripts.replay_a2d import (  # noqa: E402
     ensure_model,
     set_gripper_neutral,
     set_target_visibility,
+    set_upper_body_pose,
 )
 from scripts.show_last_frame import show_static_pose  # noqa: E402
 
@@ -46,6 +47,7 @@ def prepare_zero_pose(model: mujoco.MjModel) -> tuple[mujoco.MjData, np.ndarray]
         data.qvel[dof_address] = 0.0
         qpos_addresses.append(qpos_address)
 
+    set_upper_body_pose(model, data)
     set_gripper_neutral(model, data)
     set_target_visibility(model, False)
     data.time = 0.0

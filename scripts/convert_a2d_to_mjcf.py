@@ -29,11 +29,24 @@ from scripts.mjcf_utils import (
 
 DEFAULT_A2D_URDF = REPO_ROOT / "assets" / "A2D_Omnipicker" / "A2D.urdf"
 DEFAULT_A2D_MJCF = DEFAULT_A2D_URDF.with_suffix(".xml")
+DEFAULT_A2D_ROBOT_ONLY_MJCF = DEFAULT_A2D_URDF.with_name("A2D_robot_only.xml")
+DEFAULT_DICE_ASSET_ROOT = REPO_ROOT / "assets" / "objects" / "dice"
 
 A2D_ARM_JOINT_NAMES = tuple(
     [f"Joint{index}_l" for index in range(1, 8)]
     + [f"Joint{index}_r" for index in range(1, 8)]
 )
+A2D_HEAD_JOINT_NAMES = ("joint_head_yaw", "joint_head_pitch")
+
+
+def _enable_a2d_head_joints(robot: ET.Element) -> None:
+    """Restore the movable head joints authored as fixed in the source URDF."""
+
+    for name in A2D_HEAD_JOINT_NAMES:
+        joint = robot.find(f"./joint[@name='{name}']")
+        if joint is None:
+            raise ValueError(f"A2D URDF is missing head joint {name!r}")
+        joint.set("type", "revolute")
 
 
 def _validate_a2d_model(model: mujoco.MjModel) -> tuple[int, int]:
@@ -63,6 +76,7 @@ def convert_a2d_urdf_to_mjcf(
     output_path: Path = DEFAULT_A2D_MJCF,
     *,
     min_inertia_eigenvalue: float = 1e-10,
+    include_table: bool = True,
 ) -> ConversionResult:
     urdf_path = urdf_path.expanduser().resolve()
     output_path = output_path.expanduser().resolve()
@@ -72,6 +86,7 @@ def convert_a2d_urdf_to_mjcf(
     robot = ET.parse(urdf_path).getroot()
     if robot.tag != "robot":
         raise ValueError(f"Expected a URDF <robot> root, found <{robot.tag}>")
+    _enable_a2d_head_joints(robot)
     _install_mujoco_compiler_options(robot)
     repaired = _repair_inertials(robot, min_inertia_eigenvalue)
     assets = _load_assets(urdf_path.parent)
@@ -80,12 +95,19 @@ def convert_a2d_urdf_to_mjcf(
         ET.tostring(robot, encoding="unicode"),
         assets=assets,
     )
-    spec.modelname = "a2d_omnipicker_replay"
+    spec.modelname = (
+        "a2d_omnipicker_replay" if include_table else "a2d_omnipicker_robot_only"
+    )
     spec.compile()
 
     mjcf_root = ET.fromstring(spec.to_xml())
     _rewrite_mesh_paths(mjcf_root, urdf_path.parent, output_path.parent)
-    _augment_for_replay(mjcf_root)
+    _augment_for_replay(
+        mjcf_root,
+        include_table=include_table,
+        dice_asset_root=DEFAULT_DICE_ASSET_ROOT,
+        output_directory=output_path.parent,
+    )
     ET.indent(mjcf_root, space="  ")
     xml_bytes = ET.tostring(mjcf_root, encoding="utf-8", xml_declaration=True)
 
@@ -120,17 +142,28 @@ def convert_a2d_urdf_to_mjcf(
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--urdf", type=Path, default=DEFAULT_A2D_URDF)
-    parser.add_argument("--output", type=Path, default=DEFAULT_A2D_MJCF)
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--min-inertia-eigenvalue", type=float, default=1e-10)
+    parser.add_argument(
+        "--without-table",
+        action="store_true",
+        help="Generate the robot-only scene without the table",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
+    output_path = args.output
+    if output_path is None:
+        output_path = (
+            DEFAULT_A2D_ROBOT_ONLY_MJCF if args.without_table else DEFAULT_A2D_MJCF
+        )
     result = convert_a2d_urdf_to_mjcf(
         args.urdf,
-        args.output,
+        output_path,
         min_inertia_eigenvalue=args.min_inertia_eigenvalue,
+        include_table=not args.without_table,
     )
     repaired = ", ".join(result.repaired_inertials) or "none"
     print(f"Generated: {result.output_path}")

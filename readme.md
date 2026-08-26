@@ -11,17 +11,28 @@
 
 ## 生成 A2D MJCF
 
+机器人头部和躯干的姿态：0, 25.00167804031422, 0.3087556226039414, 0.24924583435058595
+
 ```bash
+# 默认生成带 140 × 90 × 80 cm 白色桌子和骰子的场景
 .venv/bin/python scripts/convert_a2d_to_mjcf.py
+
+# 另存一个不带桌子的机器人版本
+.venv/bin/python scripts/convert_a2d_to_mjcf.py --without-table
 ```
 
 默认输出为 `assets/A2D_Omnipicker/A2D.xml`。回放脚本发现 URDF 比 XML
-更新时也会自动重新生成模型。
+更新时也会自动重新生成模型。只有机器人的版本输出为
+`assets/A2D_Omnipicker/A2D_robot_only.xml`。
 
 ## 回放轨迹
 
 ```bash
 .venv/bin/python scripts/replay_a2d.py
+
+# 回放只有机器人的版本
+.venv/bin/python scripts/replay_a2d.py \
+  --model assets/A2D_Omnipicker/A2D_robot_only.xml
 ```
 
 回放直接将数据中的 14 维 `action_joint_position` 按左右臂顺序映射到

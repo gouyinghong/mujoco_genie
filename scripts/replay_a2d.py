@@ -22,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.convert_a2d_to_mjcf import (  # noqa: E402
     A2D_ARM_JOINT_NAMES,
     DEFAULT_A2D_MJCF,
+    DEFAULT_A2D_ROBOT_ONLY_MJCF,
     DEFAULT_A2D_URDF,
     convert_a2d_urdf_to_mjcf,
 )
@@ -37,6 +38,12 @@ A2D_GRIPPER_JOINTS = tuple(
     for side in ("left", "right")
     for finger in ("narrow", "wide")
     for link in (1, 2, 3, 4)
+)
+A2D_UPPER_BODY_POSE = (
+    ("joint_head_yaw", np.deg2rad(0.0)),
+    ("joint_head_pitch", np.deg2rad(25.00167804031422)),
+    ("joint_body_pitch", 0.3087556226039414),
+    ("joint_lift_body", 0.24924583435058595),
 )
 
 
@@ -193,6 +200,31 @@ def set_gripper_neutral(model: mujoco.MjModel, data: mujoco.MjData) -> None:
         data.qvel[dof_address] = 0.0
 
 
+def set_upper_body_pose(model: mujoco.MjModel, data: mujoco.MjData) -> None:
+    """Hold the head and torso at the recorded replay pose."""
+
+    for name, position in A2D_UPPER_BODY_POSE:
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        if joint_id < 0:
+            raise ValueError(f"Model is missing upper-body joint {name!r}")
+        if model.jnt_type[joint_id] not in (
+            mujoco.mjtJoint.mjJNT_HINGE,
+            mujoco.mjtJoint.mjJNT_SLIDE,
+        ):
+            raise ValueError(f"Upper-body joint {name!r} is not scalar")
+        if model.jnt_limited[joint_id]:
+            lower, upper = model.jnt_range[joint_id]
+            if not lower <= position <= upper:
+                raise ValueError(
+                    f"Upper-body joint {name!r} position {position} is outside "
+                    f"[{lower}, {upper}]"
+                )
+        qpos_address = int(model.jnt_qposadr[joint_id])
+        dof_address = int(model.jnt_dofadr[joint_id])
+        data.qpos[qpos_address] = position
+        data.qvel[dof_address] = 0.0
+
+
 def interpolate_joint_state(
     trajectory: Trajectory, trajectory_time_s: float
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -335,6 +367,7 @@ def apply_kinematic_pose(
     data.qpos[bindings.qpos_addresses] = joint_positions
     data.qvel[:] = 0.0
     data.qvel[bindings.dof_addresses] = joint_velocities
+    set_upper_body_pose(model, data)
     set_gripper_neutral(model, data)
     data.time = float(np.clip(trajectory_time_s, 0.0, trajectory.duration_s))
     mujoco.mj_forward(model, data)
@@ -405,14 +438,21 @@ def ensure_model(
     model_path: Path = DEFAULT_A2D_MJCF,
     urdf_path: Path = DEFAULT_A2D_URDF,
     rebuild: bool = False,
+    include_table: bool | None = None,
 ) -> Path:
     model_path = model_path.expanduser().resolve()
     urdf_path = urdf_path.expanduser().resolve()
+    if include_table is None:
+        include_table = model_path != DEFAULT_A2D_ROBOT_ONLY_MJCF.resolve()
     needs_rebuild = rebuild or not model_path.exists()
     if model_path.exists() and urdf_path.stat().st_mtime > model_path.stat().st_mtime:
         needs_rebuild = True
     if needs_rebuild:
-        result = convert_a2d_urdf_to_mjcf(urdf_path, model_path)
+        result = convert_a2d_urdf_to_mjcf(
+            urdf_path,
+            model_path,
+            include_table=include_table,
+        )
         print(f"Generated MuJoCo model: {result.output_path}")
         print(f"Repaired inertials: {', '.join(result.repaired_inertials) or 'none'}")
     return model_path

@@ -14,6 +14,7 @@ from scripts.convert_a2d_to_mjcf import (
 )
 from scripts.replay_a2d import (
     A2D_GRIPPER_JOINTS,
+    A2D_UPPER_BODY_POSE,
     DEFAULT_EPISODE,
     DEFAULT_SUMMARY,
     bind_joints,
@@ -39,9 +40,9 @@ def test_a2d_conversion_and_joint7_zero_calibration(
 ) -> None:
     output_path, model = converted_a2d_model
     assert output_path.is_file()
-    assert model.nq == 32
-    assert model.nv == 32
-    assert model.njnt == 32
+    assert model.nq == 41
+    assert model.nv == 40
+    assert model.njnt == 35
     assert model.nmocap == 2
     assert np.count_nonzero((model.geom_group == 1) & (model.geom_contype == 0)) == 39
     assert np.count_nonzero((model.geom_group == 0) & (model.geom_contype != 0)) == 39
@@ -61,6 +62,66 @@ def test_a2d_conversion_and_joint7_zero_calibration(
             @ Rotation.from_rotvec((0.0, 0.0, zero_offset)).as_matrix()
         )
         np.testing.assert_allclose(actual_rotation, expected_rotation, atol=1e-6)
+
+
+def test_table_dimensions_position_and_color(
+    converted_a2d_model: tuple[Path, mujoco.MjModel],
+) -> None:
+    _, model = converted_a2d_model
+    table_body_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_BODY, "table"
+    )
+    table_top_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_GEOM, "table_top"
+    )
+
+    assert table_body_id >= 0
+    assert table_top_id >= 0
+    np.testing.assert_allclose(model.body_pos[table_body_id], (0.90, 0.0, 0.0))
+    np.testing.assert_allclose(model.geom_pos[table_top_id], (0.0, 0.0, 0.77))
+    np.testing.assert_allclose(model.geom_size[table_top_id], (0.45, 0.70, 0.03))
+    np.testing.assert_allclose(model.geom_rgba[table_top_id], (0.92, 0.92, 0.92, 1.0))
+
+
+def test_dice_is_textured_free_body_on_table(
+    converted_a2d_model: tuple[Path, mujoco.MjModel],
+) -> None:
+    _, model = converted_a2d_model
+    dice_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "dice")
+    dice_joint_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_JOINT, "dice_free_joint"
+    )
+    dice_visual_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_GEOM, "dice_visual"
+    )
+    dice_collision_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_GEOM, "dice_collision"
+    )
+
+    assert dice_body_id >= 0
+    assert dice_joint_id >= 0
+    assert dice_visual_id >= 0
+    assert dice_collision_id >= 0
+    assert model.jnt_type[dice_joint_id] == mujoco.mjtJoint.mjJNT_FREE
+    np.testing.assert_allclose(model.body_pos[dice_body_id], (0.75, 0.0, 0.8248))
+    np.testing.assert_allclose(
+        model.geom_size[dice_collision_id], (0.0248, 0.0248, 0.0248)
+    )
+    assert model.geom_matid[dice_visual_id] >= 0
+
+
+def test_robot_only_conversion_omits_table(tmp_path: Path) -> None:
+    output_path = tmp_path / "a2d_robot_only.xml"
+    convert_a2d_urdf_to_mjcf(
+        DEFAULT_A2D_URDF,
+        output_path,
+        include_table=False,
+    )
+    model = mujoco.MjModel.from_xml_path(str(output_path))
+
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "table") == -1
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "table_top") == -1
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "dice") == -1
 
 
 def test_joint_binding_and_limits(
@@ -110,6 +171,9 @@ def test_last_frame_uses_final_action_joint(
     for joint_name in A2D_GRIPPER_JOINTS:
         joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
         assert data.qpos[model.jnt_qposadr[joint_id]] == 0.0
+    for joint_name, expected in A2D_UPPER_BODY_POSE:
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
+        assert data.qpos[model.jnt_qposadr[joint_id]] == pytest.approx(expected)
     assert data.time == pytest.approx(trajectory.duration_s)
 
 
@@ -121,5 +185,8 @@ def test_zero_pose_sets_all_arm_joints_to_zero(
 
     assert qpos_addresses.shape == (14,)
     np.testing.assert_array_equal(data.qpos[qpos_addresses], np.zeros(14))
+    for joint_name, expected in A2D_UPPER_BODY_POSE:
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
+        assert data.qpos[model.jnt_qposadr[joint_id]] == pytest.approx(expected)
     np.testing.assert_array_equal(data.qvel, np.zeros(model.nv))
     assert data.time == 0.0
