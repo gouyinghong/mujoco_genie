@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Show and hold the final A2D trajectory frame in MuJoCo."""
+"""Show and hold the final A2D arm, gripper, and dice replay state."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from scripts.replay_a2d import (  # noqa: E402
     Trajectory,
     apply_kinematic_pose,
     bind_joints,
+    build_dice_replay_plan,
     ensure_model,
     load_trajectory,
     set_target_visibility,
@@ -38,11 +39,12 @@ def prepare_last_frame(
     *,
     show_target: bool,
 ) -> mujoco.MjData:
-    """Create MjData positioned exactly at action_joint_position[-1]."""
+    """Create MjData positioned at the final arm, gripper, and dice state."""
 
     data = mujoco.MjData(model)
     data.qpos[:] = model.qpos0
     set_target_visibility(model, show_target)
+    dice_plan = build_dice_replay_plan(model, trajectory, bindings)
     apply_kinematic_pose(
         model,
         data,
@@ -50,6 +52,7 @@ def prepare_last_frame(
         bindings,
         trajectory.duration_s,
         show_target=show_target,
+        dice_plan=dice_plan,
     )
     return data
 
@@ -116,7 +119,13 @@ def main() -> None:
         f"Holding final frame {trajectory.frames - 1} "
         f"at t={trajectory.duration_s:.6f} s; close the viewer to exit."
     )
-    print("A2D gripper: neutral URDF pose")
+    if trajectory.effector_positions is None:
+        print("A2D gripper: neutral URDF pose")
+    else:
+        print(
+            "A2D gripper action_effector [left, right]: "
+            f"{trajectory.effector_positions[-1]}"
+        )
     show_static_pose(
         model,
         data,

@@ -1,7 +1,8 @@
 # A2D MuJoCo replay
 
 使用 `assets/A2D_Omnipicker/A2D.urdf` 在原生 MuJoCo 中回放
-`datasets/fixed_spine3_to_g1` 的双臂 `action_joint_position`。
+`datasets/fixed_spine3_to_g1_add_effector` 的双臂 `action_joint_position`
+和左右夹爪 `action_effector`。
 
 ## 环境
 
@@ -37,7 +38,12 @@
 
 回放直接将数据中的 14 维 `action_joint_position` 按左右臂顺序映射到
 `Joint1_l`～`Joint7_l` 和 `Joint1_r`～`Joint7_r`，经过时间戳线性插值后写入
-MuJoCo `qpos`。这是运动学回放，不经过控制器或动力学跟踪。
+MuJoCo `qpos`。两维 `action_effector` 按 `[左, 右]` 顺序控制四连杆夹爪，
+其中 `0` 表示闭合、`1` 表示张开。这是运动学回放，不经过控制器或动力学跟踪。
+
+回放会从 `action_effector` 自动识别主要抓取侧、最后一次持续闭合的起点和随后
+释放的时刻。骰子初始化在闭合起点的夹爪中心，闭合期间随夹爪搬运，释放后按
+重力轨迹落到桌面。本条轨迹识别为右夹爪第 54 帧开始闭合、第 75 帧释放。
 
 常用选项：
 
@@ -50,6 +56,43 @@ MuJoCo `qpos`。这是运动学回放，不经过控制器或动力学跟踪。
 
 # 不打开窗口，运行 FK 诊断
 .venv/bin/python scripts/replay_a2d.py --headless
+```
+
+使用 `--no-loop` 时，窗口会停在第 0 帧。先在窗口中调整视角，调整好后让窗口
+获得焦点并按空格键开始播放。若希望打开窗口后立即播放，可再加
+`--start-immediately`。播放过程中按空格键可以暂停，再按一次则从当前时间点
+继续；暂停期间轨迹时间不会前进。
+
+主抓放回放可以用 `--body-lift-m` 指定固定的躯干升降高度。机器人姿态和骰子
+初始抓取位置会使用同一个高度重新计算。骰子在抓取前保持水平姿态平放在桌面，
+抓取后则保持相对于夹爪的姿态关系。
+
+调整机器人头部和躯干姿态时，可以使用单独的交互回放脚本。它仍会回放双臂和
+`action_effector`，但骰子固定在桌面上：
+
+```bash
+.venv/bin/python scripts/replay_a2d_torso_adjust.py
+```
+
+指定另一套同结构的数据集目录：
+
+```bash
+.venv/bin/python scripts/replay_a2d_torso_adjust.py \
+  --dataset-dir datasets/fixed_spine3_to_g1_0723_add_effector
+```
+
+在 MuJoCo 窗口中用 `W/S` 调节躯干俯仰、`R/F` 调节躯干高度、`I/K` 调节
+头部俯仰、`J/L` 调节头部左右角度；按空格开始或重新播放。终端会输出当前的
+`[head_yaw_deg, head_pitch_deg, body_pitch_rad, body_lift_m]`，也可以用
+`--body-pitch-rad`、`--body-lift-m` 等参数指定初始值。
+
+要让某一侧夹爪在所有帧保持固定开合值，可使用 `--left-effector` 或
+`--right-effector`。例如右夹爪完全闭合：
+
+```bash
+.venv/bin/python scripts/replay_a2d_torso_adjust.py \
+  --dataset-dir datasets/fixed_spine3_to_g1_0723_add_effector \
+  --right-effector 0
 ```
 
 ## 静态比较姿态
@@ -84,8 +127,10 @@ MuJoCo `qpos`。这是运动学回放，不经过控制器或动力学跟踪。
 
 ## 夹爪说明
 
-A2D URDF 将每侧四连杆夹爪写成八个独立树关节，未描述闭环或 mimic 约束；轨迹
-也没有夹爪通道。为避免可视化时机构被拉散，所有脚本都将夹爪保持在 URDF 零位。
+A2D URDF 将每侧四连杆夹爪写成八个独立树关节，未描述闭环或 mimic 约束。
+回放代码依据原始 Omnipicker 的闭环尺寸预先求解联动关系，将 `[0, 1]` 开度映射到
+驱动指根关节的 `0～π/4 rad`，并同步设置其余被动关节。没有
+`action_effector` 的旧轨迹仍会保持夹爪在 URDF 零位。
 
 ## 测试
 
