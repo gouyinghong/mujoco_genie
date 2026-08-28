@@ -76,6 +76,8 @@ class Trajectory:
     target_eef_wxyz: np.ndarray
     achieved_eef_wxyz: np.ndarray
     effector_positions: np.ndarray | None
+    episode_frame_indices: np.ndarray
+    source_frame_indices: np.ndarray
 
     @property
     def frames(self) -> int:
@@ -97,13 +99,18 @@ class JointBindings:
 class DiceReplayPlan:
     side: str
     side_index: int
+    position_frame: int
     grasp_start_frame: int
+    grasp_frame: int
     release_frame: int
     grasp_start_s: float
+    grasp_s: float
     release_s: float
     initial_position: np.ndarray
     initial_quaternion: np.ndarray
-    grasp_gripper_quaternion: np.ndarray
+    initial_yaw_rad: float
+    gripper_to_dice_position: np.ndarray
+    gripper_to_dice_quaternion: np.ndarray
     release_position: np.ndarray
     release_quaternion: np.ndarray
     landing_position: np.ndarray
@@ -136,6 +143,16 @@ def load_trajectory(episode_path: Path, summary_path: Path) -> Trajectory:
             if "action_effector" in episode.files
             else None
         )
+        episode_frame_indices = (
+            np.asarray(episode["episode_frame_index"], dtype=np.int64)
+            if "episode_frame_index" in episode.files
+            else np.arange(timestamps_ns.size, dtype=np.int64)
+        )
+        source_frame_indices = (
+            np.asarray(episode["source_frame_index"], dtype=np.int64)
+            if "source_frame_index" in episode.files
+            else episode_frame_indices.copy()
+        )
 
     if timestamps_ns.ndim != 1 or timestamps_ns.size < 2:
         raise ValueError("local_timestamps_ns must contain at least two timestamps")
@@ -147,6 +164,16 @@ def load_trajectory(episode_path: Path, summary_path: Path) -> Trajectory:
         )
     if target_eef.shape != (frames, 14) or achieved_eef.shape != (frames, 14):
         raise ValueError("EEF arrays must have shape (frames, 14)")
+    if episode_frame_indices.shape != (frames,):
+        raise ValueError(
+            f"episode_frame_index must have shape ({frames},), "
+            f"got {episode_frame_indices.shape}"
+        )
+    if source_frame_indices.shape != (frames,):
+        raise ValueError(
+            f"source_frame_index must have shape ({frames},), "
+            f"got {source_frame_indices.shape}"
+        )
     if effector_positions is not None:
         if effector_positions.shape != (frames, 2):
             raise ValueError(
@@ -176,6 +203,8 @@ def load_trajectory(episode_path: Path, summary_path: Path) -> Trajectory:
         target_eef_wxyz=target_eef,
         achieved_eef_wxyz=achieved_eef,
         effector_positions=effector_positions,
+        episode_frame_indices=episode_frame_indices,
+        source_frame_indices=source_frame_indices,
     )
 
 
@@ -361,6 +390,21 @@ def interpolate_joint_state(
     return (1.0 - alpha) * q0 + alpha * q1, (q1 - q0) / interval
 
 
+def trajectory_frame_at_time(
+    trajectory: Trajectory, trajectory_time_s: float
+) -> int:
+    """Return the latest original trajectory frame reached at a replay time."""
+
+    time_s = float(np.clip(trajectory_time_s, 0.0, trajectory.duration_s))
+    return int(
+        np.clip(
+            np.searchsorted(trajectory.times_s, time_s, side="right") - 1,
+            0,
+            trajectory.frames - 1,
+        )
+    )
+
+
 def interpolate_effector_state(
     trajectory: Trajectory, trajectory_time_s: float
 ) -> tuple[np.ndarray, np.ndarray] | None:
@@ -434,6 +478,12 @@ def _quat_conjugate(quaternion: np.ndarray) -> np.ndarray:
     return result
 
 
+def _quat_rotate(quaternion: np.ndarray, vector: np.ndarray) -> np.ndarray:
+    result = np.empty(3, dtype=float)
+    mujoco.mju_rotVecQuat(result, np.asarray(vector, dtype=float), quaternion)
+    return result
+
+
 def _quat_interpolate(first: np.ndarray, second: np.ndarray, alpha: float) -> np.ndarray:
     first = np.asarray(first, dtype=float)
     second = np.asarray(second, dtype=float)
@@ -496,6 +546,24 @@ def set_target_visibility(model: mujoco.MjModel, visible: bool) -> None:
             model.site_rgba[site_id, 3] = alpha
 
 
+def disable_dice(model: mujoco.MjModel) -> bool:
+    """Hide the dice and disable all of its contacts for robot-only testing."""
+
+    dice_body_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_BODY, "dice"
+    )
+    if dice_body_id < 0:
+        return False
+    dice_geom_ids = np.flatnonzero(model.geom_bodyid == dice_body_id)
+    model.geom_rgba[dice_geom_ids, 3] = 0.0
+    dice_material_ids = np.unique(model.geom_matid[dice_geom_ids])
+    dice_material_ids = dice_material_ids[dice_material_ids >= 0]
+    model.mat_rgba[dice_material_ids, 3] = 0.0
+    model.geom_contype[dice_geom_ids] = 0
+    model.geom_conaffinity[dice_geom_ids] = 0
+    return True
+
+
 def _interpolate_target(trajectory: Trajectory, time_s: float) -> np.ndarray:
     right = int(
         np.clip(
@@ -539,6 +607,53 @@ def _grasp_frame_pose(
     return position.copy(), data.xquat[base_body_id].copy()
 
 
+def _dice_alignment_yaw(
+    model: mujoco.MjModel, data: mujoco.MjData, side: str
+) -> float:
+    """Return the smallest cube-symmetric yaw aligned with the finger axis."""
+
+    body_ids = [
+        mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_BODY, f"{side}_{finger}4_Link"
+        )
+        for finger in ("wide", "narrow")
+    ]
+    if any(body_id < 0 for body_id in body_ids):
+        raise ValueError(f"Model is missing {side} fingertip bodies")
+    closing_axis_xy = data.xpos[body_ids[1], :2] - data.xpos[body_ids[0], :2]
+    if np.linalg.norm(closing_axis_xy) < 1e-9:
+        raise ValueError(f"{side} gripper closing axis is degenerate")
+    raw_yaw = float(np.arctan2(closing_axis_xy[1], closing_axis_xy[0]))
+    # A cube is unchanged for grasp purposes after a 90-degree yaw. Choose the
+    # equivalent angle closest to zero to avoid unnecessary visual rotation.
+    return float((raw_yaw + np.pi / 4.0) % (np.pi / 2.0) - np.pi / 4.0)
+
+
+def _gripper_fingertip_center(
+    model: mujoco.MjModel, data: mujoco.MjData, side: str
+) -> np.ndarray:
+    """Return the midpoint of the two link-4 collision geometries."""
+
+    fingertip_positions: list[np.ndarray] = []
+    for finger in ("wide", "narrow"):
+        body_id = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_BODY, f"{side}_{finger}4_Link"
+        )
+        if body_id < 0:
+            raise ValueError(f"Model is missing {side}_{finger}4_Link")
+        collision_geom_ids = np.flatnonzero(
+            (model.geom_bodyid == body_id) & (model.geom_contype != 0)
+        )
+        if collision_geom_ids.size == 0:
+            raise ValueError(
+                f"Body {side}_{finger}4_Link has no collision geometry"
+            )
+        fingertip_positions.append(
+            np.mean(data.geom_xpos[collision_geom_ids], axis=0)
+        )
+    return np.mean(fingertip_positions, axis=0)
+
+
 def _set_dice_replay_pose(
     model: mujoco.MjModel,
     data: mujoco.MjData,
@@ -553,16 +668,19 @@ def _set_dice_replay_pose(
     qpos_address = int(model.jnt_qposadr[dice_joint_id])
     dof_address = int(model.jnt_dofadr[dice_joint_id])
 
-    if trajectory_time_s < plan.grasp_start_s:
+    if trajectory_time_s < plan.grasp_s:
         position = plan.initial_position
         quaternion = plan.initial_quaternion
     elif trajectory_time_s < plan.release_s:
-        position, gripper_quaternion = _grasp_frame_pose(model, data, plan.side)
-        gripper_to_dice = _quat_multiply(
-            _quat_conjugate(plan.grasp_gripper_quaternion),
-            plan.initial_quaternion,
+        gripper_position, gripper_quaternion = _grasp_frame_pose(
+            model, data, plan.side
         )
-        quaternion = _quat_multiply(gripper_quaternion, gripper_to_dice)
+        position = gripper_position + _quat_rotate(
+            gripper_quaternion, plan.gripper_to_dice_position
+        )
+        quaternion = _quat_multiply(
+            gripper_quaternion, plan.gripper_to_dice_quaternion
+        )
     else:
         drop_time = max(0.0, trajectory_time_s - plan.release_s)
         if plan.drop_duration_s <= 0.0:
@@ -631,11 +749,22 @@ def build_dice_replay_plan(
     bindings: JointBindings,
     *,
     upper_body_pose: tuple[tuple[str, float], ...] = A2D_UPPER_BODY_POSE,
+    dice_on_table: bool = False,
+    align_dice_to_gripper: bool = False,
+    dice_center_frame: int | None = None,
 ) -> DiceReplayPlan | None:
     """Build the deterministic grasp, carry, release, and table landing plan."""
 
     if trajectory.effector_positions is None:
         return None
+    if align_dice_to_gripper and not dice_on_table:
+        raise ValueError("align_dice_to_gripper requires dice_on_table")
+    if dice_center_frame is not None and not dice_on_table:
+        raise ValueError("dice_center_frame requires dice_on_table")
+    if dice_center_frame is not None and not 0 <= dice_center_frame < trajectory.frames:
+        raise ValueError(
+            f"dice_center_frame must be in [0, {trajectory.frames - 1}]"
+        )
     if (
         mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "dice_free_joint")
         < 0
@@ -648,20 +777,68 @@ def build_dice_replay_plan(
     probe.qpos[:] = model.qpos0
 
     grasp_start_s = float(trajectory.times_s[grasp_start_frame])
+    position_frame = (
+        grasp_start_frame if dice_center_frame is None else dice_center_frame
+    )
+    position_s = float(trajectory.times_s[position_frame])
     apply_kinematic_pose(
         model,
         probe,
         trajectory,
         bindings,
-        grasp_start_s,
+        position_s,
         show_target=False,
         upper_body_pose=upper_body_pose,
     )
-    initial_position, grasp_gripper_quaternion = _grasp_frame_pose(
-        model, probe, side
-    )
+    if dice_center_frame is None:
+        initial_position, _ = _grasp_frame_pose(model, probe, side)
+    else:
+        initial_position = _gripper_fingertip_center(model, probe, side)
     # Start with the cube upright so its collision box rests flat on the table.
     initial_quaternion = np.array((1.0, 0.0, 0.0, 0.0), dtype=float)
+    if dice_on_table:
+        initial_position[2] = DICE_TABLE_CENTER_Z
+
+    assert trajectory.effector_positions is not None
+    grasp_frame = (
+        int(np.argmin(trajectory.effector_positions[:, side_index]))
+        if dice_on_table
+        else grasp_start_frame
+    )
+    grasp_s = float(trajectory.times_s[grasp_frame])
+    apply_kinematic_pose(
+        model,
+        probe,
+        trajectory,
+        bindings,
+        grasp_s,
+        show_target=False,
+        upper_body_pose=upper_body_pose,
+    )
+    grasp_gripper_position, grasp_gripper_quaternion = _grasp_frame_pose(
+        model, probe, side
+    )
+    initial_yaw_rad = (
+        _dice_alignment_yaw(model, probe, side)
+        if align_dice_to_gripper
+        else 0.0
+    )
+    initial_quaternion = np.array(
+        (
+            np.cos(initial_yaw_rad / 2.0),
+            0.0,
+            0.0,
+            np.sin(initial_yaw_rad / 2.0),
+        ),
+        dtype=float,
+    )
+    gripper_to_dice_position = _quat_rotate(
+        _quat_conjugate(grasp_gripper_quaternion),
+        initial_position - grasp_gripper_position,
+    )
+    gripper_to_dice_quaternion = _quat_multiply(
+        _quat_conjugate(grasp_gripper_quaternion), initial_quaternion
+    )
 
     release_s = float(trajectory.times_s[release_frame])
     apply_kinematic_pose(
@@ -673,14 +850,14 @@ def build_dice_replay_plan(
         show_target=False,
         upper_body_pose=upper_body_pose,
     )
-    release_position, release_gripper_quaternion = _grasp_frame_pose(
+    release_gripper_position, release_gripper_quaternion = _grasp_frame_pose(
         model, probe, side
     )
-    gripper_to_dice = _quat_multiply(
-        _quat_conjugate(grasp_gripper_quaternion), initial_quaternion
+    release_position = release_gripper_position + _quat_rotate(
+        release_gripper_quaternion, gripper_to_dice_position
     )
     release_quaternion = _quat_multiply(
-        release_gripper_quaternion, gripper_to_dice
+        release_gripper_quaternion, gripper_to_dice_quaternion
     )
     landing_position = release_position.copy()
     landing_position[2] = DICE_TABLE_CENTER_Z
@@ -690,13 +867,18 @@ def build_dice_replay_plan(
     return DiceReplayPlan(
         side=side,
         side_index=side_index,
+        position_frame=position_frame,
         grasp_start_frame=grasp_start_frame,
+        grasp_frame=grasp_frame,
         release_frame=release_frame,
         grasp_start_s=grasp_start_s,
+        grasp_s=grasp_s,
         release_s=release_s,
         initial_position=initial_position,
         initial_quaternion=initial_quaternion,
-        grasp_gripper_quaternion=grasp_gripper_quaternion,
+        initial_yaw_rad=initial_yaw_rad,
+        gripper_to_dice_position=gripper_to_dice_position,
+        gripper_to_dice_quaternion=gripper_to_dice_quaternion,
         release_position=release_position,
         release_quaternion=release_quaternion,
         landing_position=landing_position,
@@ -717,11 +899,25 @@ def evaluate_trajectory(
     bindings: JointBindings,
     *,
     upper_body_pose: tuple[tuple[str, float], ...] = A2D_UPPER_BODY_POSE,
+    replay_dice: bool = True,
+    dice_on_table: bool = False,
+    align_dice_to_gripper: bool = False,
+    dice_center_frame: int | None = None,
 ) -> dict[str, Any]:
     data = mujoco.MjData(model)
     data.qpos[:] = model.qpos0
-    dice_plan = build_dice_replay_plan(
-        model, trajectory, bindings, upper_body_pose=upper_body_pose
+    dice_plan = (
+        build_dice_replay_plan(
+            model,
+            trajectory,
+            bindings,
+            upper_body_pose=upper_body_pose,
+            dice_on_table=dice_on_table,
+            align_dice_to_gripper=align_dice_to_gripper,
+            dice_center_frame=dice_center_frame,
+        )
+        if replay_dice
+        else None
     )
     position_errors: dict[str, list[float]] = {"left": [], "right": []}
     orientation_errors: dict[str, list[float]] = {"left": [], "right": []}
@@ -775,11 +971,15 @@ def evaluate_trajectory(
     if dice_plan is not None:
         result["dice_replay"] = {
             "gripper": dice_plan.side,
+            "position_frame": dice_plan.position_frame,
             "grasp_start_frame": dice_plan.grasp_start_frame,
             "grasp_start_s": dice_plan.grasp_start_s,
+            "grasp_frame": dice_plan.grasp_frame,
+            "grasp_s": dice_plan.grasp_s,
             "release_frame": dice_plan.release_frame,
             "release_s": dice_plan.release_s,
             "initial_position": dice_plan.initial_position.tolist(),
+            "initial_yaw_deg": float(np.degrees(dice_plan.initial_yaw_rad)),
             "landing_position": dice_plan.landing_position.tolist(),
         }
     return result
@@ -875,8 +1075,20 @@ def replay_in_viewer(
                 paused = not paused
                 wall_delta = 0.0
                 state = "paused" if paused else "resumed"
+                trajectory_time_s = (
+                    elapsed % trajectory.duration_s
+                    if loop
+                    else min(elapsed, trajectory.duration_s)
+                )
+                frame = trajectory_frame_at_time(trajectory, trajectory_time_s)
                 print(
-                    f"Replay {state} at {elapsed:.3f} s. "
+                    f"Replay {state}: trajectory frame {frame} / "
+                    f"{trajectory.frames - 1}, "
+                    f"episode_frame_index="
+                    f"{int(trajectory.episode_frame_indices[frame])}, "
+                    f"source_frame_index="
+                    f"{int(trajectory.source_frame_indices[frame])}, "
+                    f"time={trajectory_time_s:.3f} s. "
                     "Press SPACE to toggle playback.",
                     flush=True,
                 )
@@ -939,6 +1151,35 @@ def _parse_args() -> argparse.Namespace:
     parser.set_defaults(show_target=True)
     parser.add_argument("--show-collision", action="store_true")
     parser.add_argument(
+        "--no-dice",
+        action="store_true",
+        help="Hide the dice, disable its contacts, and replay only the robot",
+    )
+    parser.add_argument(
+        "--dice-on-table",
+        action="store_true",
+        help=(
+            "Place the dice flat on the table and attach it after gripper "
+            "closing completes"
+        ),
+    )
+    parser.add_argument(
+        "--align-dice-to-gripper",
+        action="store_true",
+        help=(
+            "Rotate the table-top dice so its faces align with the gripper "
+            "closing axis; implies --dice-on-table"
+        ),
+    )
+    parser.add_argument(
+        "--dice-center-frame",
+        type=int,
+        help=(
+            "Set dice x/y from the midpoint of both fingertip collision "
+            "geometries at this trajectory frame; implies --dice-on-table"
+        ),
+    )
+    parser.add_argument(
         "--headless", action="store_true", help="Run FK diagnostics without a viewer"
     )
     parser.add_argument("--rebuild-model", action="store_true")
@@ -959,12 +1200,24 @@ def main() -> None:
         (name, args.body_lift_m if name == "joint_lift_body" else position)
         for name, position in A2D_UPPER_BODY_POSE
     )
-    dice_plan = build_dice_replay_plan(
-        model,
-        trajectory,
-        bindings,
-        upper_body_pose=upper_body_pose,
+    dice_on_table = (
+        args.dice_on_table
+        or args.align_dice_to_gripper
+        or args.dice_center_frame is not None
     )
+    if args.no_dice:
+        disable_dice(model)
+        dice_plan = None
+    else:
+        dice_plan = build_dice_replay_plan(
+            model,
+            trajectory,
+            bindings,
+            upper_body_pose=upper_body_pose,
+            dice_on_table=dice_on_table,
+            align_dice_to_gripper=args.align_dice_to_gripper,
+            dice_center_frame=args.dice_center_frame,
+        )
 
     print(
         f"Loaded {trajectory.frames} frames, {trajectory.duration_s:.6f} s, "
@@ -976,12 +1229,19 @@ def main() -> None:
         print("A2D gripper: neutral URDF pose (trajectory has no gripper channel)")
     else:
         print("A2D gripper: replaying action_effector (0=closed, 1=open)")
+    if args.no_dice:
+        print("Dice: disabled (visuals, contacts, and pick-and-place replay)")
     if dice_plan is not None:
+        placement = "table" if dice_on_table else "gripper center"
         print(
             f"Dice: {dice_plan.side} gripper closes from frame "
-            f"{dice_plan.grasp_start_frame}, releases at frame "
+            f"{dice_plan.grasp_start_frame}, grasps at frame "
+            f"{dice_plan.grasp_frame}, releases at frame "
             f"{dice_plan.release_frame}; initial="
-            f"{np.array2string(dice_plan.initial_position, precision=4)}"
+            f"{np.array2string(dice_plan.initial_position, precision=4)} "
+            f"({placement}), yaw="
+            f"{np.degrees(dice_plan.initial_yaw_rad):.3f} deg, "
+            f"position_frame={dice_plan.position_frame}"
         )
 
     if args.headless:
@@ -992,6 +1252,10 @@ def main() -> None:
                     trajectory,
                     bindings,
                     upper_body_pose=upper_body_pose,
+                    replay_dice=not args.no_dice,
+                    dice_on_table=dice_on_table,
+                    align_dice_to_gripper=args.align_dice_to_gripper,
+                    dice_center_frame=args.dice_center_frame,
                 ),
                 indent=2,
             )

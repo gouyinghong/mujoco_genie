@@ -20,11 +20,13 @@ from scripts.replay_a2d import (
     apply_kinematic_pose,
     bind_joints,
     build_dice_replay_plan,
+    disable_dice,
     gripper_joint_positions,
     infer_grasp_frames,
     interpolate_effector_state,
     interpolate_joint_state,
     load_trajectory,
+    trajectory_frame_at_time,
     validate_joint_limits,
 )
 from scripts.replay_a2d_torso_adjust import (
@@ -120,6 +122,26 @@ def test_dice_is_textured_free_body_on_table(
     assert model.geom_matid[dice_visual_id] >= 0
 
 
+def test_dice_can_be_disabled_without_removing_table(
+    converted_a2d_model: tuple[Path, mujoco.MjModel],
+) -> None:
+    model_path, _ = converted_a2d_model
+    model = mujoco.MjModel.from_xml_path(str(model_path))
+    dice_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "dice")
+    table_body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "table")
+    dice_geom_ids = np.flatnonzero(model.geom_bodyid == dice_body_id)
+    dice_material_ids = np.unique(model.geom_matid[dice_geom_ids])
+    dice_material_ids = dice_material_ids[dice_material_ids >= 0]
+
+    assert disable_dice(model)
+    assert table_body_id >= 0
+    assert dice_geom_ids.size == 2
+    np.testing.assert_array_equal(model.geom_rgba[dice_geom_ids, 3], 0.0)
+    np.testing.assert_array_equal(model.mat_rgba[dice_material_ids, 3], 0.0)
+    np.testing.assert_array_equal(model.geom_contype[dice_geom_ids], 0)
+    np.testing.assert_array_equal(model.geom_conaffinity[dice_geom_ids], 0)
+
+
 def test_robot_only_conversion_omits_table(tmp_path: Path) -> None:
     output_path = tmp_path / "a2d_robot_only.xml"
     convert_a2d_urdf_to_mjcf(
@@ -185,6 +207,21 @@ def test_interpolation_uses_dataset_timestamps() -> None:
     )
 
 
+def test_replay_time_reports_trajectory_and_source_frames() -> None:
+    dataset = Path("datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm")
+    trajectory = load_trajectory(
+        dataset / "episode_000000.npz", dataset / "retarget_summary.json"
+    )
+
+    assert trajectory_frame_at_time(trajectory, 0.0) == 0
+    assert trajectory_frame_at_time(trajectory, trajectory.times_s[37]) == 37
+    midpoint = (trajectory.times_s[37] + trajectory.times_s[38]) / 2.0
+    assert trajectory_frame_at_time(trajectory, midpoint) == 37
+    assert trajectory_frame_at_time(trajectory, trajectory.duration_s) == 109
+    assert trajectory.episode_frame_indices[37] == 37
+    assert trajectory.source_frame_indices[37] == 189
+
+
 def test_grasp_event_and_dice_pick_place(
     converted_a2d_model: tuple[Path, mujoco.MjModel],
 ) -> None:
@@ -229,6 +266,131 @@ def test_grasp_event_and_dice_pick_place(
         data.qpos[dice_qpos_address : dice_qpos_address + 3],
         plan.landing_position,
         atol=1e-12,
+    )
+
+
+def test_dice_on_table_with_safe_body_lift_has_continuous_grasp(
+    converted_a2d_model: tuple[Path, mujoco.MjModel],
+) -> None:
+    _, model = converted_a2d_model
+    dataset = Path("datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm")
+    trajectory = load_trajectory(
+        dataset / "episode_000000.npz", dataset / "retarget_summary.json"
+    )
+    bindings = bind_joints(model, trajectory.joint_names)
+    upper_body_pose = tuple(
+        (name, 0.215 if name == "joint_lift_body" else position)
+        for name, position in A2D_UPPER_BODY_POSE
+    )
+    plan = build_dice_replay_plan(
+        model,
+        trajectory,
+        bindings,
+        upper_body_pose=upper_body_pose,
+        dice_on_table=True,
+    )
+    assert plan is not None
+    assert plan.grasp_start_frame == 31
+    assert plan.grasp_frame == 41
+    np.testing.assert_allclose(plan.initial_position[2], 0.8248, atol=1e-12)
+    np.testing.assert_array_equal(
+        plan.initial_quaternion, (1.0, 0.0, 0.0, 0.0)
+    )
+
+    data = mujoco.MjData(model)
+    dice_joint_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_JOINT, "dice_free_joint"
+    )
+    dice_qpos_address = int(model.jnt_qposadr[dice_joint_id])
+    for time_s in (0.0, plan.grasp_start_s, plan.grasp_s):
+        apply_kinematic_pose(
+            model,
+            data,
+            trajectory,
+            bindings,
+            time_s,
+            show_target=False,
+            dice_plan=plan,
+            upper_body_pose=upper_body_pose,
+        )
+        np.testing.assert_allclose(
+            data.qpos[dice_qpos_address : dice_qpos_address + 3],
+            plan.initial_position,
+            atol=1e-12,
+        )
+
+
+def test_dice_can_align_faces_with_gripper_closing_axis(
+    converted_a2d_model: tuple[Path, mujoco.MjModel],
+) -> None:
+    _, model = converted_a2d_model
+    dataset = Path("datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm")
+    trajectory = load_trajectory(
+        dataset / "episode_000000.npz", dataset / "retarget_summary.json"
+    )
+    bindings = bind_joints(model, trajectory.joint_names)
+    upper_body_pose = tuple(
+        (name, 0.215 if name == "joint_lift_body" else position)
+        for name, position in A2D_UPPER_BODY_POSE
+    )
+    plan = build_dice_replay_plan(
+        model,
+        trajectory,
+        bindings,
+        upper_body_pose=upper_body_pose,
+        dice_on_table=True,
+        align_dice_to_gripper=True,
+    )
+    assert plan is not None
+
+    assert np.degrees(plan.initial_yaw_rad) == pytest.approx(
+        -20.939640454, abs=1e-6
+    )
+    np.testing.assert_allclose(plan.initial_position[2], 0.8248, atol=1e-12)
+    np.testing.assert_allclose(
+        plan.initial_quaternion,
+        (
+            np.cos(plan.initial_yaw_rad / 2.0),
+            0.0,
+            0.0,
+            np.sin(plan.initial_yaw_rad / 2.0),
+        ),
+        atol=1e-12,
+    )
+
+
+def test_dice_xy_can_use_frame_37_fingertip_center(
+    converted_a2d_model: tuple[Path, mujoco.MjModel],
+) -> None:
+    _, model = converted_a2d_model
+    dataset = Path("datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm")
+    trajectory = load_trajectory(
+        dataset / "episode_000000.npz", dataset / "retarget_summary.json"
+    )
+    bindings = bind_joints(model, trajectory.joint_names)
+    upper_body_pose = tuple(
+        (name, 0.215 if name == "joint_lift_body" else position)
+        for name, position in A2D_UPPER_BODY_POSE
+    )
+    plan = build_dice_replay_plan(
+        model,
+        trajectory,
+        bindings,
+        upper_body_pose=upper_body_pose,
+        dice_on_table=True,
+        align_dice_to_gripper=True,
+        dice_center_frame=37,
+    )
+    assert plan is not None
+
+    assert plan.position_frame == 37
+    np.testing.assert_allclose(
+        plan.initial_position,
+        (0.7629448947, -0.1153648937, 0.8248),
+        atol=1e-6,
+    )
+    assert np.degrees(plan.initial_yaw_rad) == pytest.approx(
+        -20.939640454, abs=1e-6
     )
 
 

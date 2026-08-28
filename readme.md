@@ -54,14 +54,35 @@ MuJoCo `qpos`。两维 `action_effector` 按 `[左, 右]` 顺序控制四连杆�
 # 隐藏末端目标，或显示碰撞几何
 .venv/bin/python scripts/replay_a2d.py --hide-target --show-collision
 
+# 保留桌子，只隐藏骰子并关闭骰子碰撞
+.venv/bin/python scripts/replay_a2d.py --no-dice
+
+# 骰子水平放在桌面，夹爪闭合完成后再附着
+.venv/bin/python scripts/replay_a2d.py --dice-on-table
+
+# 平放骰子，并旋转骰子使侧面与夹爪闭合方向对齐
+.venv/bin/python scripts/replay_a2d.py --align-dice-to-gripper
+
+# 使用第 37 帧两侧指尖碰撞几何的中点设置骰子的 x/y
+.venv/bin/python scripts/replay_a2d.py \
+  --align-dice-to-gripper --dice-center-frame 37
+
 # 不打开窗口，运行 FK 诊断
 .venv/bin/python scripts/replay_a2d.py --headless
+
+.venv/bin/python scripts/replay_a2d.py \
+  --episode /home/gyh/mujoco_genie/datasets/fixed_spine3_to_g1_0723_add_effector_after/episode_000000.npz \
+  --summary /home/gyh/mujoco_genie/datasets/fixed_spine3_to_g1_0723_add_effector_after/retarget_summary.json \
+  --body-lift-m 0.1827884 \
+  --speed 0.5 \
+  --no-loop
 ```
 
 使用 `--no-loop` 时，窗口会停在第 0 帧。先在窗口中调整视角，调整好后让窗口
 获得焦点并按空格键开始播放。若希望打开窗口后立即播放，可再加
 `--start-immediately`。播放过程中按空格键可以暂停，再按一次则从当前时间点
-继续；暂停期间轨迹时间不会前进。
+继续；暂停期间轨迹时间不会前进。每次按空格时，终端会同时输出当前轨迹帧、
+`episode_frame_index`、原始数据的 `source_frame_index` 和轨迹时间。
 
 主抓放回放可以用 `--body-lift-m` 指定固定的躯干升降高度。机器人姿态和骰子
 初始抓取位置会使用同一个高度重新计算。骰子在抓取前保持水平姿态平放在桌面，
