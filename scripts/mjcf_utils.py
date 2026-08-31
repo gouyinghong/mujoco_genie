@@ -262,11 +262,107 @@ def _add_dice(
     )
 
 
+def _add_cardboard_box_asset(
+    mjcf_root: ET.Element,
+    worldbody: ET.Element,
+    asset_root: Path,
+    output_directory: Path,
+) -> None:
+    """Add the user's textured 24 x 16 x 7 cm cardboard box asset."""
+
+    mesh_path = asset_root / "1.obj"
+    texture_path = asset_root / "cardboard_Base_Color.png"
+    for path in (mesh_path, texture_path):
+        if not path.is_file():
+            raise FileNotFoundError(f"Cardboard box asset does not exist: {path}")
+
+    asset = mjcf_root.find("asset")
+    if asset is None:
+        raise ValueError("Converted MJCF does not contain an asset section")
+    relative_mesh_path = os.path.relpath(mesh_path.resolve(), output_directory.resolve())
+    relative_texture_path = os.path.relpath(
+        texture_path.resolve(), output_directory.resolve()
+    )
+    ET.SubElement(
+        asset,
+        "texture",
+        {
+            "name": "cardboard_box_texture",
+            "type": "2d",
+            "file": Path(relative_texture_path).as_posix(),
+        },
+    )
+    ET.SubElement(
+        asset,
+        "material",
+        {
+            "name": "cardboard_box_material",
+            "texture": "cardboard_box_texture",
+            "emission": "0.2",
+            "specular": "0.05",
+            "shininess": "0.02",
+        },
+    )
+    ET.SubElement(
+        asset,
+        "mesh",
+        {
+            "name": "cardboard_box_mesh",
+            "file": Path(relative_mesh_path).as_posix(),
+        },
+    )
+
+    cardboard_box = ET.SubElement(
+        worldbody,
+        "body",
+        {"name": "cardboard_box", "pos": "1.10 0.40 0.8"},
+    )
+    ET.SubElement(
+        cardboard_box,
+        "geom",
+        {
+            "name": "cardboard_box_visual",
+            "type": "mesh",
+            "mesh": "cardboard_box_mesh",
+            "material": "cardboard_box_material",
+            "contype": "0",
+            "conaffinity": "0",
+            "density": "0",
+            "group": "2",
+        },
+    )
+    collision_common = {
+        "type": "box",
+        "rgba": "0 0 0 0",
+        "group": "3",
+        "friction": "0.8 0.01 0.001",
+    }
+    for name, position, size in (
+        ("base", (0.0, 0.0, 0.001), (0.12, 0.08, 0.001)),
+        ("wall_x_negative", (-0.118, 0.0, 0.035), (0.002, 0.08, 0.035)),
+        ("wall_x_positive", (0.118, 0.0, 0.035), (0.002, 0.08, 0.035)),
+        ("wall_y_negative", (0.0, -0.078, 0.035), (0.12, 0.002, 0.035)),
+        ("wall_y_positive", (0.0, 0.078, 0.035), (0.12, 0.002, 0.035)),
+    ):
+        ET.SubElement(
+            cardboard_box,
+            "geom",
+            {
+                **collision_common,
+                "name": f"cardboard_box_collision_{name}",
+                "pos": " ".join(_format_float(value) for value in position),
+                "size": " ".join(_format_float(value) for value in size),
+            },
+        )
+
+
 def _augment_for_replay(
     mjcf_root: ET.Element,
     *,
     include_table: bool = True,
     dice_asset_root: Path | None = None,
+    include_cardboard_box: bool = False,
+    cardboard_box_asset_root: Path | None = None,
     output_directory: Path | None = None,
 ) -> None:
     """Add the scene, A2D EEF sites, and target mocap bodies."""
@@ -311,6 +407,15 @@ def _augment_for_replay(
         if dice_asset_root is None or output_directory is None:
             raise ValueError("Dice asset and output paths are required with the table")
         _add_dice(mjcf_root, worldbody, dice_asset_root, output_directory)
+        if include_cardboard_box:
+            if cardboard_box_asset_root is None:
+                raise ValueError("Cardboard box asset path is required")
+            _add_cardboard_box_asset(
+                mjcf_root,
+                worldbody,
+                cardboard_box_asset_root,
+                output_directory,
+            )
 
     ET.SubElement(
         worldbody,

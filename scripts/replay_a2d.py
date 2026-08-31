@@ -24,6 +24,7 @@ from scripts.convert_a2d_to_mjcf import (  # noqa: E402
     A2D_ARM_JOINT_NAMES,
     DEFAULT_A2D_MJCF,
     DEFAULT_A2D_ROBOT_ONLY_MJCF,
+    DEFAULT_A2D_WITH_BOX_MJCF,
     DEFAULT_A2D_URDF,
     convert_a2d_urdf_to_mjcf,
 )
@@ -564,6 +565,32 @@ def disable_dice(model: mujoco.MjModel) -> bool:
     return True
 
 
+def apply_texture_gamma(
+    model: mujoco.MjModel, texture_name: str, gamma: float
+) -> bool:
+    """Apply an in-memory gamma correction to one loaded RGB texture."""
+
+    if gamma <= 0.0:
+        raise ValueError("texture gamma must be positive")
+    texture_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_TEXTURE, texture_name
+    )
+    if texture_id < 0:
+        return False
+    channel_count = int(model.tex_nchannel[texture_id])
+    pixel_count = int(model.tex_width[texture_id] * model.tex_height[texture_id])
+    data_address = int(model.tex_adr[texture_id])
+    texture_data = model.tex_data[
+        data_address : data_address + pixel_count * channel_count
+    ].reshape(pixel_count, channel_count)
+    color_channels = min(3, channel_count)
+    colors = texture_data[:, :color_channels].astype(np.float32) / 255.0
+    texture_data[:, :color_channels] = np.clip(
+        255.0 * np.power(colors, gamma), 0.0, 255.0
+    ).astype(np.uint8)
+    return True
+
+
 def _interpolate_target(trajectory: Trajectory, time_s: float) -> np.ndarray:
     right = int(
         np.clip(
@@ -990,11 +1017,14 @@ def ensure_model(
     urdf_path: Path = DEFAULT_A2D_URDF,
     rebuild: bool = False,
     include_table: bool | None = None,
+    include_cardboard_box: bool | None = None,
 ) -> Path:
     model_path = model_path.expanduser().resolve()
     urdf_path = urdf_path.expanduser().resolve()
     if include_table is None:
         include_table = model_path != DEFAULT_A2D_ROBOT_ONLY_MJCF.resolve()
+    if include_cardboard_box is None:
+        include_cardboard_box = model_path == DEFAULT_A2D_WITH_BOX_MJCF.resolve()
     needs_rebuild = rebuild or not model_path.exists()
     if model_path.exists() and urdf_path.stat().st_mtime > model_path.stat().st_mtime:
         needs_rebuild = True
@@ -1003,6 +1033,7 @@ def ensure_model(
             urdf_path,
             model_path,
             include_table=include_table,
+            include_cardboard_box=include_cardboard_box,
         )
         print(f"Generated MuJoCo model: {result.output_path}")
         print(f"Repaired inertials: {', '.join(result.repaired_inertials) or 'none'}")
@@ -1151,6 +1182,12 @@ def _parse_args() -> argparse.Namespace:
     parser.set_defaults(show_target=True)
     parser.add_argument("--show-collision", action="store_true")
     parser.add_argument(
+        "--box-texture-gamma",
+        type=float,
+        default=0.65,
+        help="Cardboard texture gamma correction; use 1.0 for the original",
+    )
+    parser.add_argument(
         "--no-dice",
         action="store_true",
         help="Hide the dice, disable its contacts, and replay only the robot",
@@ -1190,9 +1227,14 @@ def main() -> None:
     args = _parse_args()
     if args.speed <= 0:
         raise ValueError("speed must be positive")
+    if args.box_texture_gamma <= 0:
+        raise ValueError("box texture gamma must be positive")
 
     model_path = ensure_model(args.model, args.urdf, args.rebuild_model)
     model = mujoco.MjModel.from_xml_path(str(model_path))
+    box_texture_adjusted = apply_texture_gamma(
+        model, "cardboard_box_texture", args.box_texture_gamma
+    )
     trajectory = load_trajectory(args.episode, args.summary)
     bindings = bind_joints(model, trajectory.joint_names)
     validate_joint_limits(model, trajectory, bindings)
@@ -1224,6 +1266,8 @@ def main() -> None:
         f"{(trajectory.frames - 1) / trajectory.duration_s:.3f} Hz"
     )
     print(f"Model: {model_path}")
+    if box_texture_adjusted:
+        print(f"Cardboard texture gamma: {args.box_texture_gamma:.3f}")
     print(f"Torso lift: {args.body_lift_m:.6f} m")
     if trajectory.effector_positions is None:
         print("A2D gripper: neutral URDF pose (trajectory has no gripper channel)")

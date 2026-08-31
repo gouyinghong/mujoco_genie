@@ -29,8 +29,10 @@ from scripts.mjcf_utils import (
 
 DEFAULT_A2D_URDF = REPO_ROOT / "assets" / "A2D_Omnipicker" / "A2D.urdf"
 DEFAULT_A2D_MJCF = DEFAULT_A2D_URDF.with_suffix(".xml")
+DEFAULT_A2D_WITH_BOX_MJCF = DEFAULT_A2D_URDF.with_name("A2D_with_box.xml")
 DEFAULT_A2D_ROBOT_ONLY_MJCF = DEFAULT_A2D_URDF.with_name("A2D_robot_only.xml")
 DEFAULT_DICE_ASSET_ROOT = REPO_ROOT / "assets" / "objects" / "dice"
+DEFAULT_CARDBOARD_BOX_ASSET_ROOT = REPO_ROOT / "assets" / "objects" / "box"
 
 A2D_ARM_JOINT_NAMES = tuple(
     [f"Joint{index}_l" for index in range(1, 8)]
@@ -77,11 +79,14 @@ def convert_a2d_urdf_to_mjcf(
     *,
     min_inertia_eigenvalue: float = 1e-10,
     include_table: bool = True,
+    include_cardboard_box: bool = False,
 ) -> ConversionResult:
     urdf_path = urdf_path.expanduser().resolve()
     output_path = output_path.expanduser().resolve()
     if not urdf_path.is_file():
         raise FileNotFoundError(f"A2D URDF does not exist: {urdf_path}")
+    if include_cardboard_box and not include_table:
+        raise ValueError("The cardboard box requires include_table=True")
 
     robot = ET.parse(urdf_path).getroot()
     if robot.tag != "robot":
@@ -95,9 +100,12 @@ def convert_a2d_urdf_to_mjcf(
         ET.tostring(robot, encoding="unicode"),
         assets=assets,
     )
-    spec.modelname = (
-        "a2d_omnipicker_replay" if include_table else "a2d_omnipicker_robot_only"
-    )
+    if include_cardboard_box:
+        spec.modelname = "a2d_omnipicker_replay_with_cardboard_box"
+    elif include_table:
+        spec.modelname = "a2d_omnipicker_replay"
+    else:
+        spec.modelname = "a2d_omnipicker_robot_only"
     spec.compile()
 
     mjcf_root = ET.fromstring(spec.to_xml())
@@ -106,6 +114,8 @@ def convert_a2d_urdf_to_mjcf(
         mjcf_root,
         include_table=include_table,
         dice_asset_root=DEFAULT_DICE_ASSET_ROOT,
+        include_cardboard_box=include_cardboard_box,
+        cardboard_box_asset_root=DEFAULT_CARDBOARD_BOX_ASSET_ROOT,
         output_directory=output_path.parent,
     )
     ET.indent(mjcf_root, space="  ")
@@ -149,21 +159,32 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Generate the robot-only scene without the table",
     )
+    parser.add_argument(
+        "--with-cardboard-box",
+        action="store_true",
+        help="Add the textured cardboard box asset on the table",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = _parse_args()
+    if args.without_table and args.with_cardboard_box:
+        raise ValueError("--with-cardboard-box cannot be used with --without-table")
     output_path = args.output
     if output_path is None:
-        output_path = (
-            DEFAULT_A2D_ROBOT_ONLY_MJCF if args.without_table else DEFAULT_A2D_MJCF
-        )
+        if args.without_table:
+            output_path = DEFAULT_A2D_ROBOT_ONLY_MJCF
+        elif args.with_cardboard_box:
+            output_path = DEFAULT_A2D_WITH_BOX_MJCF
+        else:
+            output_path = DEFAULT_A2D_MJCF
     result = convert_a2d_urdf_to_mjcf(
         args.urdf,
         output_path,
         min_inertia_eigenvalue=args.min_inertia_eigenvalue,
         include_table=not args.without_table,
+        include_cardboard_box=args.with_cardboard_box,
     )
     repaired = ", ".join(result.repaired_inertials) or "none"
     print(f"Generated: {result.output_path}")

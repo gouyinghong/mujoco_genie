@@ -67,6 +67,16 @@ MuJoCo `qpos`。两维 `action_effector` 按 `[左, 右]` 顺序控制四连杆�
 .venv/bin/python scripts/replay_a2d.py \
   --align-dice-to-gripper --dice-center-frame 37
 
+# 使用 assets/objects/box 中的网格和纹理生成独立纸盒场景
+.venv/bin/python scripts/convert_a2d_to_mjcf.py --with-cardboard-box
+.venv/bin/python scripts/replay_a2d.py \
+  --model assets/A2D_Omnipicker/A2D_with_box.xml
+
+# 恢复纸盒原始、未提亮的纹理显示
+.venv/bin/python scripts/replay_a2d.py \
+  --model assets/A2D_Omnipicker/A2D_with_box.xml \
+  --box-texture-gamma 1.0
+
 # 不打开窗口，运行 FK 诊断
 .venv/bin/python scripts/replay_a2d.py --headless
 

@@ -18,6 +18,7 @@ from scripts.replay_a2d import (
     DEFAULT_SUMMARY,
     GRIPPER_LINK_ORDER,
     apply_kinematic_pose,
+    apply_texture_gamma,
     bind_joints,
     build_dice_replay_plan,
     disable_dice,
@@ -93,6 +94,91 @@ def test_table_dimensions_position_and_color(
     np.testing.assert_allclose(model.geom_pos[table_top_id], (0.0, 0.0, 0.77))
     np.testing.assert_allclose(model.geom_size[table_top_id], (0.45, 0.70, 0.03))
     np.testing.assert_allclose(model.geom_rgba[table_top_id], (0.92, 0.92, 0.92, 1.0))
+
+
+def test_textured_cardboard_box_asset_can_be_added_separately(
+    tmp_path: Path,
+) -> None:
+    default_path = tmp_path / "default.xml"
+    box_path = tmp_path / "with_box.xml"
+    convert_a2d_urdf_to_mjcf(DEFAULT_A2D_URDF, default_path)
+    convert_a2d_urdf_to_mjcf(
+        DEFAULT_A2D_URDF,
+        box_path,
+        include_cardboard_box=True,
+    )
+    default_model = mujoco.MjModel.from_xml_path(str(default_path))
+    box_model = mujoco.MjModel.from_xml_path(str(box_path))
+
+    assert (
+        mujoco.mj_name2id(
+            default_model, mujoco.mjtObj.mjOBJ_BODY, "cardboard_box"
+        )
+        == -1
+    )
+    box_body_id = mujoco.mj_name2id(
+        box_model, mujoco.mjtObj.mjOBJ_BODY, "cardboard_box"
+    )
+    visual_id = mujoco.mj_name2id(
+        box_model, mujoco.mjtObj.mjOBJ_GEOM, "cardboard_box_visual"
+    )
+    base_collision_id = mujoco.mj_name2id(
+        box_model, mujoco.mjtObj.mjOBJ_GEOM, "cardboard_box_collision_base"
+    )
+    mesh_id = mujoco.mj_name2id(
+        box_model, mujoco.mjtObj.mjOBJ_MESH, "cardboard_box_mesh"
+    )
+    material_id = mujoco.mj_name2id(
+        box_model, mujoco.mjtObj.mjOBJ_MATERIAL, "cardboard_box_material"
+    )
+    texture_id = mujoco.mj_name2id(
+        box_model, mujoco.mjtObj.mjOBJ_TEXTURE, "cardboard_box_texture"
+    )
+
+    assert (
+        min(
+            box_body_id,
+            visual_id,
+            base_collision_id,
+            mesh_id,
+            material_id,
+            texture_id,
+        )
+        >= 0
+    )
+    assert box_model.ngeom == default_model.ngeom + 6
+    np.testing.assert_allclose(box_model.body_pos[box_body_id], (1.10, 0.40, 0.8))
+    assert box_model.geom_matid[visual_id] == material_id
+    assert box_model.geom_dataid[visual_id] == mesh_id
+    assert texture_id in box_model.mat_texid[material_id]
+    assert box_model.mat_emission[material_id] == pytest.approx(0.2)
+    assert box_model.mat_specular[material_id] == pytest.approx(0.05)
+    assert box_model.mat_shininess[material_id] == pytest.approx(0.02)
+    np.testing.assert_allclose(
+        box_model.geom_pos[base_collision_id], (0.0, 0.0, 0.001)
+    )
+    np.testing.assert_allclose(
+        box_model.geom_size[base_collision_id], (0.12, 0.08, 0.001)
+    )
+    assert box_model.geom_contype[visual_id] == 0
+    box_geom_ids = np.flatnonzero(box_model.geom_bodyid == box_body_id)
+    collision_geom_ids = box_geom_ids[box_model.geom_contype[box_geom_ids] != 0]
+    assert collision_geom_ids.size == 5
+
+    texture_address = int(box_model.tex_adr[texture_id])
+    texture_size = int(
+        box_model.tex_width[texture_id]
+        * box_model.tex_height[texture_id]
+        * box_model.tex_nchannel[texture_id]
+    )
+    original_texture = box_model.tex_data[
+        texture_address : texture_address + texture_size
+    ].copy()
+    assert apply_texture_gamma(box_model, "cardboard_box_texture", 0.65)
+    corrected_texture = box_model.tex_data[
+        texture_address : texture_address + texture_size
+    ]
+    assert float(np.mean(corrected_texture)) > float(np.mean(original_texture))
 
 
 def test_dice_is_textured_free_body_on_table(
