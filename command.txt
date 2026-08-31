@@ -1,0 +1,16 @@
+1. 盒子带有旋转角度
+.venv/bin/python scripts/replay_a2d.py   --model /home/gyh/mujoco_genie/assets/A2D_Omnipicker/A2D_with_box.xml   --episode /home/gyh/mujoco_genie/datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return/episode_000000.npz   --summary /home/gyh/mujoco_genie/datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return/retarget_summary.json   --body-lift-m 0.215   --speed 0.5   --no-loop   --align-dice-to-gripper   --dice-center-frame 37
+2. 盒子没有旋转角度
+.venv/bin/python scripts/replay_a2d.py \
+  --model /home/gyh/mujoco_genie/assets/A2D_Omnipicker/A2D_with_box.xml \
+  --episode /home/gyh/mujoco_genie/datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return/episode_000000.npz \
+  --summary /home/gyh/mujoco_genie/datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return/retarget_summary.json \
+  --body-lift-m 0.264496 \
+  --body-pitch-rad 0.387295 \
+  --box-x 0.64615 \
+  --box-y 0.04115 \
+  --box-yaw-deg 0 \
+  --speed 0.5 \
+  --no-loop \
+  --align-dice-to-gripper \
+  --dice-center-frame 37

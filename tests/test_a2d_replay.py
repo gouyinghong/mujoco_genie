@@ -27,6 +27,7 @@ from scripts.replay_a2d import (
     interpolate_effector_state,
     interpolate_joint_state,
     load_trajectory,
+    set_cardboard_box_pose,
     trajectory_frame_at_time,
     validate_joint_limits,
 )
@@ -147,7 +148,14 @@ def test_textured_cardboard_box_asset_can_be_added_separately(
         >= 0
     )
     assert box_model.ngeom == default_model.ngeom + 6
-    np.testing.assert_allclose(box_model.body_pos[box_body_id], (1.10, 0.40, 0.8))
+    np.testing.assert_allclose(
+        box_model.body_pos[box_body_id], (0.65582, 0.03264, 0.8)
+    )
+    np.testing.assert_allclose(
+        box_model.body_quat[box_body_id],
+        (0.906307787, 0.0, 0.0, 0.422618262),
+        atol=1e-9,
+    )
     assert box_model.geom_matid[visual_id] == material_id
     assert box_model.geom_dataid[visual_id] == mesh_id
     assert texture_id in box_model.mat_texid[material_id]
@@ -179,6 +187,16 @@ def test_textured_cardboard_box_asset_can_be_added_separately(
         texture_address : texture_address + texture_size
     ]
     assert float(np.mean(corrected_texture)) > float(np.mean(original_texture))
+
+    assert set_cardboard_box_pose(
+        box_model, x=0.64615, y=0.04115, yaw_deg=0.0
+    )
+    np.testing.assert_allclose(
+        box_model.body_pos[box_body_id], (0.64615, 0.04115, 0.8)
+    )
+    np.testing.assert_allclose(
+        box_model.body_quat[box_body_id], (1.0, 0.0, 0.0, 0.0)
+    )
 
 
 def test_dice_is_textured_free_body_on_table(
@@ -478,6 +496,77 @@ def test_dice_xy_can_use_frame_37_fingertip_center(
     assert np.degrees(plan.initial_yaw_rad) == pytest.approx(
         -20.939640454, abs=1e-6
     )
+
+
+def test_return_trajectory_drops_dice_inside_box_without_touching_walls(
+    tmp_path: Path,
+) -> None:
+    model_path = tmp_path / "with_box.xml"
+    convert_a2d_urdf_to_mjcf(
+        DEFAULT_A2D_URDF,
+        model_path,
+        include_cardboard_box=True,
+    )
+    model = mujoco.MjModel.from_xml_path(str(model_path))
+    dataset = Path(
+        "datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return"
+    )
+    trajectory = load_trajectory(
+        dataset / "episode_000000.npz", dataset / "retarget_summary.json"
+    )
+    bindings = bind_joints(model, trajectory.joint_names)
+    upper_body_pose = tuple(
+        (name, 0.215 if name == "joint_lift_body" else position)
+        for name, position in A2D_UPPER_BODY_POSE
+    )
+    plan = build_dice_replay_plan(
+        model,
+        trajectory,
+        bindings,
+        upper_body_pose=upper_body_pose,
+        dice_on_table=True,
+        align_dice_to_gripper=True,
+        dice_center_frame=37,
+    )
+    assert plan is not None
+
+    np.testing.assert_allclose(
+        plan.landing_position,
+        (0.6461014157, 0.0407973902, 0.8268),
+        atol=1e-9,
+    )
+    wall_ids = {
+        mujoco.mj_name2id(
+            model,
+            mujoco.mjtObj.mjOBJ_GEOM,
+            f"cardboard_box_collision_{wall}",
+        )
+        for wall in (
+            "wall_x_negative",
+            "wall_x_positive",
+            "wall_y_negative",
+            "wall_y_positive",
+        )
+    }
+    data = mujoco.MjData(model)
+    wall_contact_frames = []
+    for frame, time_s in enumerate(trajectory.times_s):
+        apply_kinematic_pose(
+            model,
+            data,
+            trajectory,
+            bindings,
+            float(time_s),
+            show_target=False,
+            dice_plan=plan,
+            upper_body_pose=upper_body_pose,
+        )
+        if any(
+            int(contact.geom[0]) in wall_ids or int(contact.geom[1]) in wall_ids
+            for contact in data.contact
+        ):
+            wall_contact_frames.append(frame)
+    assert wall_contact_frames == []
 
 
 def test_body_lift_moves_inferred_dice_grasp_position(

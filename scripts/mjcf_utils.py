@@ -312,10 +312,16 @@ def _add_cardboard_box_asset(
         },
     )
 
+    # The 50-degree yaw and small offset from the trajectory's dice release
+    # point leave a collision-free entry/exit corridor for the right gripper.
     cardboard_box = ET.SubElement(
         worldbody,
         "body",
-        {"name": "cardboard_box", "pos": "1.10 0.40 0.8"},
+        {
+            "name": "cardboard_box",
+            "pos": "0.65582 0.03264 0.8",
+            "quat": "0.906307787 0 0 0.422618262",
+        },
     )
     ET.SubElement(
         cardboard_box,

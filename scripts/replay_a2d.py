@@ -61,6 +61,7 @@ GRIPPER_WIDE_JOINT_POSITIONS = np.array(
 )
 GRIPPER_CENTER_LOCAL_POS = np.array((0.0, 0.0, 0.14308), dtype=float)
 DICE_TABLE_CENTER_Z = 0.8248
+DICE_HALF_EXTENT_M = 0.0248
 A2D_UPPER_BODY_POSE = (
     ("joint_head_yaw", np.deg2rad(0.0)),
     ("joint_head_pitch", np.deg2rad(25.00167804031422)),
@@ -591,6 +592,35 @@ def apply_texture_gamma(
     return True
 
 
+def set_cardboard_box_pose(
+    model: mujoco.MjModel,
+    *,
+    x: float | None = None,
+    y: float | None = None,
+    yaw_deg: float | None = None,
+) -> bool:
+    """Override the fixed cardboard-box pose without rebuilding the MJCF."""
+
+    body_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_BODY, "cardboard_box"
+    )
+    if body_id < 0:
+        return False
+    if x is not None:
+        model.body_pos[body_id, 0] = x
+    if y is not None:
+        model.body_pos[body_id, 1] = y
+    if yaw_deg is not None:
+        half_yaw = np.deg2rad(yaw_deg) / 2.0
+        model.body_quat[body_id] = (
+            np.cos(half_yaw),
+            0.0,
+            0.0,
+            np.sin(half_yaw),
+        )
+    return True
+
+
 def _interpolate_target(trajectory: Trajectory, time_s: float) -> np.ndarray:
     right = int(
         np.clip(
@@ -888,6 +918,26 @@ def build_dice_replay_plan(
     )
     landing_position = release_position.copy()
     landing_position[2] = DICE_TABLE_CENTER_Z
+    box_base_id = mujoco.mj_name2id(
+        model, mujoco.mjtObj.mjOBJ_GEOM, "cardboard_box_collision_base"
+    )
+    if box_base_id >= 0:
+        box_base_center = probe.geom_xpos[box_base_id]
+        box_base_half_size = model.geom_size[box_base_id]
+        box_base_rotation = probe.geom_xmat[box_base_id].reshape(3, 3)
+        landing_in_box = box_base_rotation.T @ (
+            landing_position - box_base_center
+        )
+        dice_fits_on_base = np.all(
+            np.abs(landing_in_box[:2])
+            <= box_base_half_size[:2] - DICE_HALF_EXTENT_M
+        )
+        if dice_fits_on_base:
+            landing_position[2] = (
+                box_base_center[2]
+                + box_base_half_size[2]
+                + DICE_HALF_EXTENT_M
+            )
     drop_height = max(0.0, release_position[2] - landing_position[2])
     drop_duration_s = float(np.sqrt(2.0 * drop_height / 9.81))
 
@@ -1162,6 +1212,12 @@ def _parse_args() -> argparse.Namespace:
         help="Fixed torso lift used by replay and dice-position inference",
     )
     parser.add_argument(
+        "--body-pitch-rad",
+        type=float,
+        default=dict(A2D_UPPER_BODY_POSE)["joint_body_pitch"],
+        help="Fixed torso pitch in radians used throughout the replay",
+    )
+    parser.add_argument(
         "--no-loop",
         action="store_false",
         dest="loop",
@@ -1186,6 +1242,21 @@ def _parse_args() -> argparse.Namespace:
         type=float,
         default=0.65,
         help="Cardboard texture gamma correction; use 1.0 for the original",
+    )
+    parser.add_argument(
+        "--box-x",
+        type=float,
+        help="Override the cardboard-box world x position",
+    )
+    parser.add_argument(
+        "--box-y",
+        type=float,
+        help="Override the cardboard-box world y position",
+    )
+    parser.add_argument(
+        "--box-yaw-deg",
+        type=float,
+        help="Override the cardboard-box yaw in degrees",
     )
     parser.add_argument(
         "--no-dice",
@@ -1232,6 +1303,17 @@ def main() -> None:
 
     model_path = ensure_model(args.model, args.urdf, args.rebuild_model)
     model = mujoco.MjModel.from_xml_path(str(model_path))
+    box_pose_requested = any(
+        value is not None for value in (args.box_x, args.box_y, args.box_yaw_deg)
+    )
+    box_pose_adjusted = set_cardboard_box_pose(
+        model,
+        x=args.box_x,
+        y=args.box_y,
+        yaw_deg=args.box_yaw_deg,
+    )
+    if box_pose_requested and not box_pose_adjusted:
+        raise ValueError("The selected model does not contain cardboard_box")
     box_texture_adjusted = apply_texture_gamma(
         model, "cardboard_box_texture", args.box_texture_gamma
     )
@@ -1239,7 +1321,14 @@ def main() -> None:
     bindings = bind_joints(model, trajectory.joint_names)
     validate_joint_limits(model, trajectory, bindings)
     upper_body_pose = tuple(
-        (name, args.body_lift_m if name == "joint_lift_body" else position)
+        (
+            name,
+            args.body_lift_m
+            if name == "joint_lift_body"
+            else args.body_pitch_rad
+            if name == "joint_body_pitch"
+            else position,
+        )
         for name, position in A2D_UPPER_BODY_POSE
     )
     dice_on_table = (
@@ -1269,6 +1358,21 @@ def main() -> None:
     if box_texture_adjusted:
         print(f"Cardboard texture gamma: {args.box_texture_gamma:.3f}")
     print(f"Torso lift: {args.body_lift_m:.6f} m")
+    print(f"Torso pitch: {args.body_pitch_rad:.6f} rad")
+    if box_pose_adjusted:
+        box_body_id = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_BODY, "cardboard_box"
+        )
+        box_quaternion = model.body_quat[box_body_id]
+        box_yaw_deg = np.degrees(
+            2.0 * np.arctan2(box_quaternion[3], box_quaternion[0])
+        )
+        print(
+            "Cardboard box: x="
+            f"{model.body_pos[box_body_id, 0]:.6f}, y="
+            f"{model.body_pos[box_body_id, 1]:.6f}, yaw="
+            f"{box_yaw_deg:.3f} deg"
+        )
     if trajectory.effector_positions is None:
         print("A2D gripper: neutral URDF pose (trajectory has no gripper channel)")
     else:
