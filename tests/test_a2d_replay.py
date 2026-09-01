@@ -450,6 +450,7 @@ def test_dice_can_align_faces_with_gripper_closing_axis(
     assert np.degrees(plan.initial_yaw_rad) == pytest.approx(
         -20.939640454, abs=1e-6
     )
+
     np.testing.assert_allclose(plan.initial_position[2], 0.8248, atol=1e-12)
     np.testing.assert_allclose(
         plan.initial_quaternion,
@@ -495,6 +496,41 @@ def test_dice_xy_can_use_frame_37_fingertip_center(
     )
     assert np.degrees(plan.initial_yaw_rad) == pytest.approx(
         -20.939640454, abs=1e-6
+    )
+
+
+def test_dice_xy_offset_moves_table_pose_without_changing_height(
+    converted_a2d_model: tuple[Path, mujoco.MjModel],
+) -> None:
+    _, model = converted_a2d_model
+    dataset = Path("datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm")
+    trajectory = load_trajectory(
+        dataset / "episode_000000.npz", dataset / "retarget_summary.json"
+    )
+    bindings = bind_joints(model, trajectory.joint_names)
+    base = build_dice_replay_plan(
+        model,
+        trajectory,
+        bindings,
+        dice_on_table=True,
+        align_dice_to_gripper=True,
+        dice_center_frame=37,
+    )
+    shifted = build_dice_replay_plan(
+        model,
+        trajectory,
+        bindings,
+        dice_on_table=True,
+        align_dice_to_gripper=True,
+        dice_center_frame=37,
+        dice_xy_offset_m=(0.01, 0.02),
+    )
+    assert base is not None and shifted is not None
+
+    np.testing.assert_allclose(
+        shifted.initial_position - base.initial_position,
+        (0.01, 0.02, 0.0),
+        atol=1e-12,
     )
 
 
@@ -574,6 +610,8 @@ def test_body_lift_moves_inferred_dice_grasp_position(
 ) -> None:
     _, model = converted_a2d_model
     dataset = Path("datasets/fixed_spine3_to_g1_0723_add_effector_after")
+    if not (dataset / "retarget_summary.json").is_file():
+        pytest.skip("optional fixed_spine3_to_g1_0723_add_effector_after dataset missing")
     trajectory = load_trajectory(
         dataset / "episode_000000.npz", dataset / "retarget_summary.json"
     )

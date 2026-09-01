@@ -1,16 +1,12 @@
-1. 盒子带有旋转角度
-.venv/bin/python scripts/replay_a2d.py   --model /home/gyh/mujoco_genie/assets/A2D_Omnipicker/A2D_with_box.xml   --episode /home/gyh/mujoco_genie/datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return/episode_000000.npz   --summary /home/gyh/mujoco_genie/datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return/retarget_summary.json   --body-lift-m 0.215   --speed 0.5   --no-loop   --align-dice-to-gripper   --dice-center-frame 37
-2. 盒子没有旋转角度
-.venv/bin/python scripts/replay_a2d.py \
-  --model /home/gyh/mujoco_genie/assets/A2D_Omnipicker/A2D_with_box.xml \
-  --episode /home/gyh/mujoco_genie/datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return/episode_000000.npz \
-  --summary /home/gyh/mujoco_genie/datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return/retarget_summary.json \
-  --body-lift-m 0.264496 \
-  --body-pitch-rad 0.387295 \
-  --box-x 0.64615 \
-  --box-y 0.04115 \
-  --box-yaw-deg 0 \
-  --speed 0.5 \
-  --no-loop \
-  --align-dice-to-gripper \
-  --dice-center-frame 37
+1. 计算躯干
+.venv/bin/python scripts/optimize_a2d_fixed_torso.py \
+  --dataset-dir datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return \
+  --model assets/A2D_Omnipicker/A2D_with_box.xml
+2. 计算数据（也可指定更新某一条）
+.venv/bin/python scripts/prepare_a2d_dataset_replay.py \
+  --dataset-dir datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return \
+  --model assets/A2D_Omnipicker/A2D_with_box.xml \
+  --body-lift-m 0.279480 \
+  --body-pitch-rad 0.387295
+3. 查看replay结果
+.venv/bin/python scripts/replay_a2d_dataset.py --speed 0.5

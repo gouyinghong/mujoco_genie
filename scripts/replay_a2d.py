@@ -809,6 +809,7 @@ def build_dice_replay_plan(
     dice_on_table: bool = False,
     align_dice_to_gripper: bool = False,
     dice_center_frame: int | None = None,
+    dice_xy_offset_m: tuple[float, float] = (0.0, 0.0),
 ) -> DiceReplayPlan | None:
     """Build the deterministic grasp, carry, release, and table landing plan."""
 
@@ -822,6 +823,9 @@ def build_dice_replay_plan(
         raise ValueError(
             f"dice_center_frame must be in [0, {trajectory.frames - 1}]"
         )
+    dice_xy_offset = np.asarray(dice_xy_offset_m, dtype=float)
+    if dice_xy_offset.shape != (2,) or not np.isfinite(dice_xy_offset).all():
+        raise ValueError("dice_xy_offset_m must contain two finite values")
     if (
         mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "dice_free_joint")
         < 0
@@ -851,6 +855,7 @@ def build_dice_replay_plan(
         initial_position, _ = _grasp_frame_pose(model, probe, side)
     else:
         initial_position = _gripper_fingertip_center(model, probe, side)
+    initial_position[:2] += dice_xy_offset
     # Start with the cube upright so its collision box rests flat on the table.
     initial_quaternion = np.array((1.0, 0.0, 0.0, 0.0), dtype=float)
     if dice_on_table:
@@ -980,6 +985,7 @@ def evaluate_trajectory(
     dice_on_table: bool = False,
     align_dice_to_gripper: bool = False,
     dice_center_frame: int | None = None,
+    dice_xy_offset_m: tuple[float, float] = (0.0, 0.0),
 ) -> dict[str, Any]:
     data = mujoco.MjData(model)
     data.qpos[:] = model.qpos0
@@ -992,6 +998,7 @@ def evaluate_trajectory(
             dice_on_table=dice_on_table,
             align_dice_to_gripper=align_dice_to_gripper,
             dice_center_frame=dice_center_frame,
+            dice_xy_offset_m=dice_xy_offset_m,
         )
         if replay_dice
         else None

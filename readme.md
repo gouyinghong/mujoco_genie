@@ -98,6 +98,79 @@ MuJoCo `qpos`。两维 `action_effector` 按 `[左, 右]` 顺序控制四连杆�
 初始抓取位置会使用同一个高度重新计算。骰子在抓取前保持水平姿态平放在桌面，
 抓取后则保持相对于夹爪的姿态关系。
 
+## 固定躯干的整目录回放
+
+可以先搜索一组固定躯干参数，在保持参考抓取高度仅小幅上调（默认最多 20 mm）
+的约束下，最大化同时满足 IK、桌面无穿模和纸盒无碰撞的 episode 数量：
+
+```bash
+.venv/bin/python scripts/optimize_a2d_fixed_torso.py \
+  --dataset-dir datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return \
+  --model assets/A2D_Omnipicker/A2D_with_box.xml
+```
+
+搜索报告写入 `datasets/torso_pose_optimization.json`。脚本先做完整俯仰角与参考
+高度偏移的快速搜索，再对最佳候选执行骰子、桌面和纸盒的完整碰撞验证。可用
+`--pitch-min-rad`、`--pitch-max-rad`、`--pitch-step-rad` 以及
+`--height-offset-min-m`、`--height-offset-max-m`、`--height-offset-step-m`
+调整搜索范围和精度。
+
+先为目录中的每条 episode 预计算右臂高度校正、骰子初始位置和纸盒位置：
+
+```bash
+.venv/bin/python scripts/prepare_a2d_dataset_replay.py \
+  --dataset-dir datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return \
+  --body-lift-m 0.264496 \
+  --body-pitch-rad 0.387295
+```
+
+原始 NPZ 不会被修改。结果写入 `datasets/replay_layouts.json`，校正后的 14 维
+关节轨迹写入 `datasets/.replay_cache/<数据集名称>/`。因此替换具体的数据集
+子目录不会删除已生成的清单和缓存。预计算会自动跳过不能满足 IK 误差和纸盒
+碰撞要求的 episode。
+
+修改 `datasets/replay_layout_overrides.json` 中某一条参数后，可以只重新计算该条
+并合并回现有清单，其他 episode 的记录和缓存不会重算：
+
+```bash
+.venv/bin/python scripts/prepare_a2d_dataset_replay.py \
+  --dataset-dir datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return \
+  --model assets/A2D_Omnipicker/A2D_with_box.xml \
+  --body-lift-m 0.264496 \
+  --body-pitch-rad 0.387295 \
+  --episode episode_000009.npz
+```
+
+可重复使用 `--episode` 一次更新多条。首次生成共享清单、修改模型、固定躯干
+参数或参考轨迹 `episode_000000.npz` 后，仍需执行一次不带 `--episode` 的完整预处理。
+
+可先无窗口验证所有通过的 episode：
+
+```bash
+.venv/bin/python scripts/replay_a2d_dataset.py --headless
+```
+
+打开批量可视化窗口：
+
+```bash
+.venv/bin/python scripts/replay_a2d_dataset.py --speed 0.5
+```
+
+窗口中按 `SPACE` 暂停或继续，按 `N`/`P` 切换下一条/上一条，按 `ENTER` 重新播放
+当前 episode。需要连续自动播放全部通过的数据时使用：
+
+```bash
+.venv/bin/python scripts/replay_a2d_dataset.py \
+  --speed 0.5 --start-immediately --auto-advance
+```
+
+需要人工检查报告中标记为失败、但仍生成了缓存和布局的数据时，可加
+`--include-failed`。
+
+播放器始终使用清单中的同一组 `body_lift` 和 `body_pitch`。每条轨迹只校正右臂：
+先对齐桌面抓取高度，再在抓稳后按需要平滑抬高放置阶段；骰子和纸盒随后根据校正
+后的抓取与释放位置自动摆放。
+
 调整机器人头部和躯干姿态时，可以使用单独的交互回放脚本。它仍会回放双臂和
 `action_effector`，但骰子固定在桌面上：
 
