@@ -9,6 +9,9 @@ venv/
 *.log
 
 datasets/
-assets/
+
+assets/G1_120s
+assets/objects
+assets/robot_g1_arms_convex_decomposition
 
 .env
