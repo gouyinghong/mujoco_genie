@@ -156,6 +156,20 @@ MuJoCo `qpos`。两维 `action_effector` 按 `[左, 右]` 顺序控制四连杆�
 .venv/bin/python scripts/replay_a2d_dataset.py --speed 0.5
 ```
 
+使用真实机器人标定参数，以固定的 1280×800、30 FPS 头部相机画面 replay：
+
+```bash
+.venv/bin/python scripts/replay_a2d_head_camera.py --speed 0.5
+```
+
+真实标定文件中的 `ppx/ppy` 是从图像左上角开始的绝对像素坐标；脚本会将其
+换算为 MuJoCo 要求的、相对图像中心的 `principalpixel` 偏移。默认严格使用
+标定的相机位置和方向，不会根据纸盒位置改变相机光轴。
+
+头部相机窗口中：空格暂停/继续，`N/P` 切换 episode，Enter 重新播放，
+`Q` 或 Esc 退出。默认应用真实 `plumb_bob` 畸变；使用 `--no-distortion`
+可查看无畸变针孔图像。
+
 窗口中按 `SPACE` 暂停或继续，按 `N`/`P` 切换下一条/上一条，按 `ENTER` 重新播放
 当前 episode。需要连续自动播放全部通过的数据时使用：
 

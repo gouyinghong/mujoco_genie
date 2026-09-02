@@ -25,6 +25,7 @@ from scripts.mjcf_utils import (
     _repair_inertials,
     _rewrite_mesh_paths,
 )
+from scripts.a2d_head_camera import add_calibrated_head_camera
 
 
 DEFAULT_A2D_URDF = REPO_ROOT / "assets" / "A2D_Omnipicker" / "A2D.urdf"
@@ -118,6 +119,7 @@ def convert_a2d_urdf_to_mjcf(
         cardboard_box_asset_root=DEFAULT_CARDBOARD_BOX_ASSET_ROOT,
         output_directory=output_path.parent,
     )
+    add_calibrated_head_camera(mjcf_root)
     ET.indent(mjcf_root, space="  ")
     xml_bytes = ET.tostring(mjcf_root, encoding="utf-8", xml_declaration=True)
 

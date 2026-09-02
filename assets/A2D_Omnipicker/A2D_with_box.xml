@@ -68,6 +68,7 @@
             <body name="link-pitch_head" pos="-0.050238 0 0.060065" quat="0.707105 0.707108 0 0">
               <inertial pos="0.0257009 0.0316254 -3.7739e-05" quat="0.661342 0.654801 0.258526 0.258893" mass="0.707064" diaginertia="0.00237749 0.00185 0.00168017" />
               <joint name="joint_head_pitch" pos="0 0 0" axis="0 0 1" range="-0.785398 0.785398" actuatorfrcrange="-50 50" />
+              <camera name="head_color" mode="fixed" pos="-0.0837751053941 0.0558943832435 -0.0113016756969" quat="0.70644127 0.00596275 0.70771816 -0.00633991" focalpixel="650.348510742 649.672912598" principalpixel="3.75616455078 1.63385009766" resolution="1280 800" sensorsize="1 1" />
               <geom pos="0 0 0" quat="1.32679e-06 0 1 0" type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.752941 0.752941 0.752941 1" mesh="link-pitch_head" />
               <geom pos="0 0 0" quat="1.32679e-06 0 1 0" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="link-pitch_head" />
             </body>
