@@ -170,6 +170,57 @@ MuJoCo `qpos`。两维 `action_effector` 按 `[左, 右]` 顺序控制四连杆�
 `Q` 或 Esc 退出。默认应用真实 `plumb_bob` 畸变；使用 `--no-distortion`
 可查看无畸变针孔图像。
 
+将所有通过预处理的 replay 按固定 30 Hz 采集为本地 LeRobot v3 数据集：
+
+```bash
+uv pip install --python .venv/bin/python -r requirements-lerobot.txt
+.venv/bin/python scripts/collect_a2d_lerobot.py
+```
+
+默认输出到 `collected_datasets/a2d_head_camera_roi_lerobot/`。相机先生成并应用畸变到
+1280×800 图像，再按 `image[320:800, 126:974]` 保存 848×480 的
+`observation.images.head_color` 视频，以及 16 维 `observation.state` 和 `action`。
+16 维顺序为左臂 7 个关节、右臂 7 个关节、左右夹爪开度，夹爪仍使用
+`0=闭合，1=张开`。每条样本满足 `action_t = state_{t+1}`；由于最后一个状态
+没有下一帧动作，所以每个 episode 保存的 transition 数比采样状态数少 1。
+采集脚本不会覆盖已存在的输出目录；试采一条数据可使用：
+
+```bash
+.venv/bin/python scripts/collect_a2d_lerobot.py \
+  --output-dir collected_datasets/a2d_head_camera_test \
+  --max-episodes 1 \
+  --preview
+```
+
+使用 GR00T 策略服务器在同一 MuJoCo 场景中进行闭环推理验证：
+
+```bash
+uv pip install --python .venv/bin/python -r requirements-gr00t-client.txt
+.venv/bin/python scripts/eval_mujoco_gr00t_genie1.py \
+  --policy-host 172.20.103.219 \
+  --policy-port 5555
+```
+
+默认加载第一个通过预处理的 episode 作为初始骰子和纸盒布局，并保持清单中的固定
+躯干姿态。MuJoCo 主窗口和 848×480 策略输入窗口打开后，按空格开始/暂停，按
+`Q` 或 Esc 退出。输入状态和输出动作均按
+`[左臂7, 左夹爪, 右臂7, 右夹爪]` 排列。只检查本地场景、相机和观测形状而不连接
+服务器时使用：
+
+```bash
+MUJOCO_GL=egl .venv/bin/python scripts/eval_mujoco_gr00t_genie1.py \
+  --dry-run --headless
+```
+
+保存 rollout 的策略输入视频和已执行动作：
+
+```bash
+.venv/bin/python scripts/eval_mujoco_gr00t_genie1.py \
+  --policy-host 172.20.103.219 \
+  --save-video logs/mujoco_gr00t_rollout.mp4 \
+  --save-actions logs/mujoco_gr00t_actions.npz
+```
+
 窗口中按 `SPACE` 暂停或继续，按 `N`/`P` 切换下一条/上一条，按 `ENTER` 重新播放
 当前 episode。需要连续自动播放全部通过的数据时使用：
 

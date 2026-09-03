@@ -1,0 +1,4 @@
+# Optional dependencies for scripts/collect_a2d_lerobot.py.
+lerobot==0.4.4
+# Keep cv2.imshow support used by the existing replay and --preview windows.
+opencv-python==4.12.0.88
