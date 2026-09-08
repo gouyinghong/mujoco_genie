@@ -10,3 +10,5 @@
   --body-pitch-rad 0.387295
 3. 查看replay结果
 .venv/bin/python scripts/replay_a2d_dataset.py --speed 0.5
+4. 头部相机视角
+.venv/bin/python scripts/replay_a2d_head_camera.py --speed 0.5

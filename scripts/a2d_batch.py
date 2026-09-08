@@ -493,8 +493,8 @@ def prepare_dataset_layouts(
     dataset_dir: Path,
     output_path: Path,
     *,
-    body_lift_m: float = DEFAULT_BODY_LIFT_M,
-    body_pitch_rad: float = DEFAULT_BODY_PITCH_RAD,
+    body_lift_m: float | None = None,
+    body_pitch_rad: float | None = None,
     max_episodes: int | None = None,
     episode_names: tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
@@ -528,6 +528,10 @@ def prepare_dataset_layouts(
                 "Existing manifest uses a different model; run a full preparation"
             )
         existing_torso = existing_document.get("fixed_torso", {})
+        if body_lift_m is None:
+            body_lift_m = float(existing_torso["body_lift_m"])
+        if body_pitch_rad is None:
+            body_pitch_rad = float(existing_torso["body_pitch_rad"])
         if not (
             np.isclose(existing_torso.get("body_lift_m", np.nan), body_lift_m)
             and np.isclose(
@@ -551,6 +555,10 @@ def prepare_dataset_layouts(
         episodes = all_episodes
         if max_episodes is not None:
             episodes = episodes[:max_episodes]
+    if body_lift_m is None:
+        body_lift_m = DEFAULT_BODY_LIFT_M
+    if body_pitch_rad is None:
+        body_pitch_rad = DEFAULT_BODY_PITCH_RAD
     model = mujoco.MjModel.from_xml_path(str(model_path))
     upper_body_pose = fixed_upper_body_pose(body_lift_m, body_pitch_rad)
     layout_overrides = load_layout_overrides(dataset_dir)

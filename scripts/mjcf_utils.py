@@ -177,6 +177,80 @@ def _add_table(worldbody: ET.Element) -> None:
         )
 
 
+def _remove_direct_collision_geoms(body: ET.Element) -> None:
+    """Remove collision geoms while preserving direct visual geoms."""
+
+    for geom in list(body.findall("geom")):
+        if geom.get("contype", "1") != "0":
+            body.remove(geom)
+
+
+def _simplify_a2d_gripper_collisions(mjcf_root: ET.Element) -> None:
+    """Replace concave gripper-link hulls with grasp-focused contact pads.
+
+    MuJoCo collides mesh geoms through their convex hull.  The A2D URDF uses
+    each detailed STL for both rendering and collision, which closes the gaps
+    in its four-bar mechanism and causes links 1/2/3 to contact an object well
+    before the fingertips.  Those transmission-link collision meshes are
+    removed.  Link 4 is represented by one central narrow-finger capsule and
+    two separated wide-finger capsules, matching the three physical pads.
+    """
+
+    contact_common = {
+        "type": "capsule",
+        "size": "0.0085",
+        "density": "0",
+        "group": "0",
+        "contype": "4",
+        "conaffinity": "3",
+        "condim": "4",
+        "friction": "1.2 0.01 0.001",
+        "rgba": "0.75294 0.75294 0.75294 1",
+    }
+    for side in ("left", "right"):
+        gripper_base = _body(mjcf_root, f"{side}_base_link")
+        for geom in gripper_base.findall("geom"):
+            if geom.get("contype", "1") == "0":
+                continue
+            # The base mesh is sufficiently close to the solid wrist housing.
+            # Retain it for table/box safety, but keep its coarse hull out of
+            # dice contacts and the grasp-focused collision overlay.
+            geom.set("name", f"{side}_gripper_base_collision")
+            geom.set("contype", "8")
+            geom.set("conaffinity", "1")
+            geom.set("group", "0")
+        for finger in ("narrow", "wide"):
+            for link in (1, 2, 3):
+                _remove_direct_collision_geoms(
+                    _body(mjcf_root, f"{side}_{finger}{link}_Link")
+                )
+
+        narrow_tip = _body(mjcf_root, f"{side}_narrow4_Link")
+        _remove_direct_collision_geoms(narrow_tip)
+        ET.SubElement(
+            narrow_tip,
+            "geom",
+            {
+                **contact_common,
+                "name": f"{side}_narrow_fingertip_collision",
+                "fromto": "0.004 -0.0085 0 0.039 -0.0085 0",
+            },
+        )
+
+        wide_tip = _body(mjcf_root, f"{side}_wide4_Link")
+        _remove_direct_collision_geoms(wide_tip)
+        for pad, z in (("lower", -0.0205), ("upper", 0.0205)):
+            ET.SubElement(
+                wide_tip,
+                "geom",
+                {
+                    **contact_common,
+                    "name": f"{side}_wide_fingertip_{pad}_collision",
+                    "fromto": f"0.004 0.0085 {z} 0.039 0.0085 {z}",
+                },
+            )
+
+
 def _add_dice(
     mjcf_root: ET.Element,
     worldbody: ET.Element,
@@ -226,11 +300,23 @@ def _add_dice(
             "file": Path(relative_mesh_path).as_posix(),
         },
     )
+    # Use the OBJ's convex hull for contact geometry.  Registering a separate
+    # mesh asset keeps the visual and collision roles explicit even though the
+    # first implementation intentionally reuses the same source OBJ.
+    ET.SubElement(
+        asset,
+        "mesh",
+        {
+            "name": "dice_collision_mesh",
+            "file": Path(relative_mesh_path).as_posix(),
+            "inertia": "convex",
+        },
+    )
 
     dice = ET.SubElement(
         worldbody,
         "body",
-        {"name": "dice", "pos": "0.75 0 0.8248"},
+        {"name": "dice", "pos": "0.75 0 0.83"},
     )
     ET.SubElement(dice, "freejoint", {"name": "dice_free_joint"})
     ET.SubElement(
@@ -252,9 +338,13 @@ def _add_dice(
         "geom",
         {
             "name": "dice_collision",
-            "type": "box",
-            "size": "0.0248 0.0248 0.0248",
+            "type": "mesh",
+            "mesh": "dice_collision_mesh",
             "density": "100",
+            # Bit 2 contacts the fingertip pads (bit 4) and ordinary scene
+            # geometry (bit 1), but not removed/disabled transmission hulls.
+            "contype": "2",
+            "conaffinity": "5",
             "rgba": "0 0 0 0",
             "group": "3",
             "friction": "1 0.01 0.001",
@@ -407,6 +497,8 @@ def _augment_for_replay(
     worldbody = mjcf_root.find("worldbody")
     if worldbody is None:
         raise ValueError("Converted MJCF does not contain a worldbody")
+
+    _simplify_a2d_gripper_collisions(mjcf_root)
 
     if include_table:
         _add_table(worldbody)

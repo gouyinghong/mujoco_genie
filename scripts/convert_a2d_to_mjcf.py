@@ -69,8 +69,8 @@ def _validate_a2d_model(model: mujoco.MjModel) -> tuple[int, int]:
     )
     if visual_geoms != 39:
         raise ValueError(f"Expected 39 A2D visual geoms, found {visual_geoms}")
-    if collision_geoms != 39:
-        raise ValueError(f"Expected 39 A2D collision geoms, found {collision_geoms}")
+    if collision_geoms != 29:
+        raise ValueError(f"Expected 29 A2D collision geoms, found {collision_geoms}")
     return visual_geoms, collision_geoms
 
 

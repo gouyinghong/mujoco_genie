@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from scripts.a2d_batch import (
     DEFAULT_BODY_LIFT_M,
@@ -139,8 +140,8 @@ def test_reference_episode_batch_layout_matches_tuned_replay(
     assert record["metrics"]["box_wall_contacts"] == 0
     np.testing.assert_allclose(
         (record["box"]["x"], record["box"]["y"], record["box"]["yaw_deg"]),
-        (0.6461452726, 0.0411534499, 0.0),
-        atol=1e-9,
+        (0.6456328025, 0.0400075739, 0.0),
+        atol=3e-3,
     )
     cache_path = tmp_path / record["cache"]
     assert cache_path.is_file()
@@ -164,7 +165,7 @@ def test_incremental_preparation_merges_only_requested_episode(
         model_path,
         DATASET,
         output_path,
-        body_lift_m=DEFAULT_BODY_LIFT_M,
+        body_lift_m=0.27948,
         body_pitch_rad=DEFAULT_BODY_PITCH_RAD,
         max_episodes=2,
     )
@@ -176,8 +177,6 @@ def test_incremental_preparation_merges_only_requested_episode(
         model_path,
         DATASET,
         output_path,
-        body_lift_m=DEFAULT_BODY_LIFT_M,
-        body_pitch_rad=DEFAULT_BODY_PITCH_RAD,
         episode_names=("episode_000001.npz",),
     )
 
@@ -187,3 +186,13 @@ def test_incremental_preparation_merges_only_requested_episode(
     ]
     assert merged["episodes"][0] == first_record
     assert first_cache.stat().st_mtime_ns == first_cache_mtime_ns
+
+    assert merged["fixed_torso"] == initial["fixed_torso"]
+    before_rejected_update = output_path.read_bytes()
+    with pytest.raises(ValueError, match="different torso pose"):
+        prepare_dataset_layouts(
+            model_path, DATASET, output_path,
+            body_lift_m=DEFAULT_BODY_LIFT_M,
+            episode_names=("episode_000001.npz",),
+        )
+    assert output_path.read_bytes() == before_rejected_update

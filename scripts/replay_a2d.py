@@ -60,8 +60,10 @@ GRIPPER_WIDE_JOINT_POSITIONS = np.array(
     dtype=float,
 )
 GRIPPER_CENTER_LOCAL_POS = np.array((0.0, 0.0, 0.14308), dtype=float)
-DICE_TABLE_CENTER_Z = 0.8248
-DICE_HALF_EXTENT_M = 0.0248
+# dice_final.obj spans [-0.03, 0.03] m on every axis.  The table surface is at
+# z=0.8 m, so a flat 6 cm die rests with its center at z=0.83 m.
+DICE_TABLE_CENTER_Z = 0.83
+DICE_HALF_EXTENT_M = 0.03
 A2D_UPPER_BODY_POSE = (
     ("joint_head_yaw", np.deg2rad(0.0)),
     ("joint_head_pitch", np.deg2rad(25.00167804031422)),

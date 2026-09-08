@@ -70,4 +70,4 @@ def test_table_metrics_detect_episode_15_penetration() -> None:
     assert metrics["first_contact_frame"] == 28
     assert metrics["deepest_contact_frame"] == 30
     assert metrics["deepest_body"] == "right_narrow4_Link"
-    assert metrics["max_penetration_m"] == pytest.approx(0.0205755873, abs=1e-9)
+    assert metrics["max_penetration_m"] == pytest.approx(0.0196758073, abs=1e-9)

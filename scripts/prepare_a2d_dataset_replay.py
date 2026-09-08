@@ -30,9 +30,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-dir", type=Path, default=DEFAULT_DATASET)
     parser.add_argument("--model", type=Path, default=DEFAULT_A2D_WITH_BOX_MJCF)
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--body-lift-m", type=float, default=DEFAULT_BODY_LIFT_M)
+    parser.add_argument("--body-lift-m", type=float,
+                        help=f"Default: existing manifest for incremental updates; otherwise {DEFAULT_BODY_LIFT_M}")
     parser.add_argument(
-        "--body-pitch-rad", type=float, default=DEFAULT_BODY_PITCH_RAD
+        "--body-pitch-rad", type=float,
+        help=f"Default: existing manifest for incremental updates; otherwise {DEFAULT_BODY_PITCH_RAD}"
     )
     parser.add_argument("--max-episodes", type=int)
     parser.add_argument(
