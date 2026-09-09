@@ -10,6 +10,7 @@ venv/
 
 datasets/
 collected_datasets/
+merged_datasets/
 
 assets/G1_120s
 assets/objects

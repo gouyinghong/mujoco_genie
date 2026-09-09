@@ -62,7 +62,8 @@ def select_records(manifest, episodes=None, limit=None):
         missing = set(episodes) - available.keys()
         if missing:
             raise ValueError(f'Unknown episodes: {sorted(missing)}')
-    records = [r for r in manifest['episodes'] if r['episode'] not in EXCLUDED
+    augmented = manifest.get('processing', {}).get('type') == 'object_centric_augmentation'
+    records = [r for r in manifest['episodes'] if (r.get('source_episode', r['episode']) if augmented else r['episode']) not in EXCLUDED
                and r.get('status') == 'ok' and (not episodes or r['episode'] in episodes)]
     records = records[:limit]
     if not records:
@@ -140,6 +141,11 @@ def main(argv=None):
     args = parse_args(argv)
     manifest_path = args.manifest.expanduser().resolve()
     manifest = legacy.load_manifest(manifest_path)
+    augmented = manifest.get('processing', {}).get('type') == 'object_centric_augmentation'
+    if augmented:
+        args.close_duration_s = manifest['processing']['close_duration_s']
+        if args.gripper_release_mode != manifest['processing']['gripper_release_mode']:
+            raise ValueError('Augmented data must use its validated gripper release mode')
     if manifest.get('processing', {}).get('type') == 'stationary_gripper_closure':
         raise ValueError('Use the original multi-episode manifest; this script prepares closure copies itself')
     records = select_records(manifest, args.episodes, args.max_episodes)
@@ -164,7 +170,8 @@ def main(argv=None):
         for record in records:
             name = record['episode']
             print(f'[{len(report["episodes"]) + 1}/{len(records)}] {name}', flush=True)
-            prepared = prepare(manifest_path, name, output / 'prepared' / Path(name).stem, duration_s=args.close_duration_s)
+            prepared = (Path(record['prepared_manifest']) if augmented else
+                        prepare(manifest_path, name, output / 'prepared' / Path(name).stem, duration_s=args.close_duration_s))
             model, tr, bindings, pose, plan, r, gripper = make_scene(prepared, args.gripper_release_mode)
             metrics = candidate_metrics(model, tr, bindings, pose, plan,
                                         np.array(r['dice']['initial_position']), r['dice']['initial_yaw_deg'],
@@ -181,7 +188,11 @@ def main(argv=None):
             model.vis.global_.offwidth = legacy.HEAD_CAMERA_WIDTH
             model.vis.global_.offheight = legacy.HEAD_CAMERA_HEIGHT
             legacy.hide_closed_head_shell(model)
-            apply_texture_gamma(model, 'cardboard_box_texture', .65)
+            appearance = record.get('augmentation', {}).get('appearance', {})
+            apply_texture_gamma(model, 'cardboard_box_texture', appearance.get('box_texture_gamma', .65))
+            if appearance:
+                model.light_diffuse[:] *= appearance['light_scale']
+                model.geom_rgba[model.geom('table_top').id, :3] = appearance['table_rgb']
             set_target_visibility(model, False)
             option = mujoco.MjvOption()
             option.geomgroup[0] = 0
@@ -218,6 +229,7 @@ def main(argv=None):
                                 sample_times_s=times, measured_state=states, action=actions,
                                 raw_gripper_openness=apertures, dice_qpos=dice_poses)
             report['episodes'].append({'lerobot_episode_index': index, 'source_episode': name,
+                                      'augmentation': record.get('augmentation'),
                                       'prepared_manifest': str(prepared), 'frames': len(actions),
                                       'validation_metrics': metrics})
             write_json(report_path, report)

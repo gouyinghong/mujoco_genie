@@ -95,7 +95,7 @@ def replay_command(args: argparse.Namespace, manifest: Path, episode: str, metri
 
 def prepare_episode(args: argparse.Namespace, manifest: dict, record: dict, output: Path) -> Path:
     # Already processed single-episode manifests must not receive a second hold.
-    if args.keep_timing or manifest.get("processing", {}).get("type") == "stationary_gripper_closure":
+    if args.keep_timing or manifest.get("processing", {}).get("type") in {"stationary_gripper_closure", "object_centric_augmentation"}:
         return args.manifest
     base = output / "data" / Path(record["episode"]).stem
     candidate = base
