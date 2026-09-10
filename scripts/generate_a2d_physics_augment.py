@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.a2d_dice_orientation import FACE_AXES, dice_quaternion, face_offset, physics_dice_layout
 from scripts.a2d_augmentation import (boundaries, source_poses, transferred_targets, solve_trajectory,
     grip_relation, perturb_record, quality, retime_trajectory)
 from scripts.a2d_batch import robot_table_metrics, TABLE_X_BOUNDS_M, TABLE_Y_BOUNDS_M
@@ -45,6 +46,7 @@ def parse_args(argv=None):
     p.add_argument('--max-slip-m', type=float, default=.01)
     p.add_argument('--max-rotation-deg', type=float, default=10)
     p.add_argument('--collect', action='store_true', help='Render accepted episodes to LeRobot after generation')
+    p.add_argument('--randomize-dice-face', action='store_true', help='Shuffle all six upward faces in blocks of six attempts')
     p.add_argument('--visual-randomization', action='store_true', help='Store per-episode lighting/table-color/box-gamma variations for collection')
     args = p.parse_args(argv)
     for k in ('max_sources', 'attempts', 'target_successes'):
@@ -67,7 +69,8 @@ def evaluate(scene, tr=None, record=None):
     r = src_record if record is None else record
     return candidate_metrics(model, source_tr if tr is None else tr, bindings, pose, plan,
         np.array(r['dice']['initial_position']), r['dice']['initial_yaw_deg'],
-        settle_time_s=.4, min_gripper_openness=0, gripper=gripper, post_rollout_s=1)
+        settle_time_s=.4, min_gripper_openness=0, gripper=gripper, post_rollout_s=1,
+        initial_quaternion=dice_quaternion(r['dice']))
 
 
 def scene_group(record):
@@ -81,9 +84,31 @@ def scene_group(record):
     return key, split
 
 
+def next_split(accepted):
+    """Maintain the nearest integer 20% test quota for every success prefix.
+
+    Failures do not advance the quota, so different success rates cannot skew
+    the final split. Half-up rounding avoids Python's ties-to-even behavior.
+    """
+    wanted_test = int(np.floor((len(accepted) + 1) * .2 + .5))
+    actual_test = sum(item['split'] == 'test' for item in accepted)
+    return 'test' if actual_test < wanted_test else 'train'
+
+
+def source_pools(count):
+    """Reserve about 20% of eligible sources for test; cycle within each pool."""
+    if count < 1:
+        raise ValueError('At least one source is required')
+    if count == 1:
+        return {'train': [0], 'test': [0]}
+    test_count = min(count - 1, max(1, int(np.floor(count * .2 + .5))))
+    return {'train': list(range(count - test_count)),
+            'test': list(range(count - test_count, count))}
+
+
 def in_workspace(r):
     p, b = r['dice']['initial_position'], r['box']
-    # Conservative bounding circle for box; die stays flat on table, yaw only.
+    # Conservative bounding circle for box; each chosen face stays flat on the table.
     return (TABLE_X_BOUNDS_M[0] + .043 < p[0] < TABLE_X_BOUNDS_M[1] - .043
         and TABLE_Y_BOUNDS_M[0] + .043 < p[1] < TABLE_Y_BOUNDS_M[1] - .043
         and TABLE_X_BOUNDS_M[0] + .15 < b['x'] < TABLE_X_BOUNDS_M[1] - .15
@@ -113,8 +138,7 @@ def save_candidate(path, source_manifest, record, tr, metadata):
                episodes=[r], counts={'total': 1, 'ok': 1, 'failed': 0},
                processing={'type': 'object_centric_augmentation', 'close_duration_s': metadata['close_duration_s'],
                            'gripper_release_mode': 'fast'}, physics_layout=str(path / 'physics_layout.json'))
-    layout = {'schema': PHYSICS_LAYOUT_SCHEMA, 'datasets': {path.name: {name: {
-        'dice_position': r['dice']['initial_position'], 'dice_yaw_deg': r['dice']['initial_yaw_deg']}}}}
+    layout = {'schema': PHYSICS_LAYOUT_SCHEMA, 'datasets': {path.name: {name: physics_dice_layout(r['dice'])}}}
     write_json(path / 'physics_layout.json', layout)
     write_json(path / 'manifest.json', new)
     return new
@@ -141,7 +165,7 @@ def export_manifest(out, source_doc, accepted, close_duration):
         r['prepared_manifest'] = str(p)
         r['augmentation']['split'] = item['split']
         records.append(r)
-        layout[name] = {'dice_position': r['dice']['initial_position'], 'dice_yaw_deg': r['dice']['initial_yaw_deg']}
+        layout[name] = physics_dice_layout(r['dice'])
     new = {k: copy.deepcopy(source_doc[k]) for k in ('schema', 'model', 'fixed_torso')}
     new.update(dataset_dir=str(data), summary=str(summary), episodes=records,
                counts={'total': len(records), 'ok': len(records), 'failed': 0},
@@ -174,7 +198,8 @@ def main(argv=None):
               'model_sha256': fingerprint(doc['model']), 'summary_sha256': fingerprint(doc['summary']),
               'quality_gate': {'max_slip_m': args.max_slip_m, 'max_rotation_deg': args.max_rotation_deg,
                                'max_contact_loss_s': .02, 'minimum_retention': .98},
-              'split_method': 'absolute 1cm scene cells / 5deg yaw bins hashed 80:20; last source held out when >=2 sources'}
+              'split_method': 'success-quota 80:20; disjoint source pools when >=2 sources; disjoint hashed scene groups',
+              'test_fraction': .2}
     sources = []
     try:
         for record in records:
@@ -200,29 +225,42 @@ def main(argv=None):
                     break
         if not sources:
             raise ValueError('No strictly stable source demonstrations found')
+        pools = source_pools(len(sources))
+        pool_attempts = {'train': 0, 'test': 0}
+        report['source_pools'] = {
+            split: [sources[i][1][5]['episode'] for i in indices]
+            for split, indices in pools.items()}
         rng = np.random.default_rng(args.seed)
+        face_rng = np.random.default_rng(np.random.SeedSequence([args.seed, 612]))
+        face_order = []
         for attempt in range(args.attempts):
             if len(report['accepted']) >= args.target_successes:
                 break
-            si = attempt % len(sources)
+            desired_split = next_split(report['accepted'])
+            pool = pools[desired_split]
+            si = pool[pool_attempts[desired_split] % len(pool)]
+            pool_attempts[desired_split] += 1
             prepared, scene, phases, poses, source_rel = sources[si]
             m, tr, bindings, pose, plan, original, grip = scene
             perturb = {'dice_xy': rng.uniform(-args.dice_xy_range_m, args.dice_xy_range_m, 2).tolist(),
                        'dice_yaw_deg': float(rng.uniform(-args.dice_yaw_range_deg, args.dice_yaw_range_deg)),
                        'box_xy': rng.uniform(-args.box_xy_range_m, args.box_xy_range_m, 2).tolist(),
                        'box_yaw_deg': float(rng.uniform(-args.box_yaw_range_deg, args.box_yaw_range_deg))}
+            if args.randomize_dice_face:
+                if attempt % 6 == 0:
+                    face_order = face_rng.permutation(FACE_AXES).tolist()
+                perturb['dice_up_face'] = face_order[attempt % 6]
             r, dd, bd = perturb_record(original, **perturb)
             # Source and scene groups are both disjoint between training and test.
-            desired_split = 'test' if len(sources) > 1 and si == len(sources) - 1 else 'train'
             for _ in range(1000):
                 group, split = scene_group(r)
-                if len(sources) == 1 or split == desired_split:
+                if split == desired_split:
                     break
                 perturb['dice_xy'] = rng.uniform(-args.dice_xy_range_m, args.dice_xy_range_m, 2).tolist()
                 perturb['box_xy'] = rng.uniform(-args.box_xy_range_m, args.box_xy_range_m, 2).tolist()
                 r, dd, bd = perturb_record(original, **perturb)
             else:
-                raise ValueError('Cannot sample requested split; increase spatial ranges')
+                raise ValueError(f'Cannot sample {desired_split} scene group for the 80:20 quota; increase spatial ranges')
             metadata = {'source_episode': original['episode'], 'source_manifest': str(prepared),
                         'close_duration_s': args.close_duration_s, 'attempt': attempt, 'seed': args.seed,
                         'perturbation': perturb, 'phases': phases, 'scene_group': group, 'split': split}
@@ -247,7 +285,9 @@ def main(argv=None):
                 corrected, ik = solve_trajectory(m, tr, bindings, pose, targets)
                 corrected = retime_trajectory(corrected, r)
                 actual_rel = grip_relation(m, corrected, bindings, pose, r, grip, boundaries(corrected, r)['grip_anchor_s'])
-                correction = source_rel @ np.linalg.inv(actual_rel)
+                # Account for the cube's face permutation without rolling the wrist.
+                desired_rel = source_rel @ np.linalg.inv(face_offset(original['dice'])) @ face_offset(r['dice'])
+                correction = desired_rel @ np.linalg.inv(actual_rel)
                 if np.linalg.norm(correction[:3, 3]) > .025:
                     raise ValueError('Grip offset too large for safe placement correction')
                 targets = transferred_targets(poses, tr.times_s, phases, dd, bd, correction)
@@ -280,6 +320,9 @@ def main(argv=None):
         report['accepted_count'] = len(report['accepted'])
         report['attempted_count'] = len(report['candidates'])
         report['target_reached'] = len(report['accepted']) >= args.target_successes
+        report['split_counts'] = {
+            split: sum(item['split'] == split for item in report['accepted'])
+            for split in ('train', 'test')}
     except BaseException as exc:
         report['status'] = 'interrupted' if isinstance(exc, KeyboardInterrupt) else 'error'
         report['error'] = str(exc)

@@ -8,7 +8,7 @@ comes exclusively from policy targets, including finite-torque finger dynamics.
 from __future__ import annotations
 
 import argparse
-from collections import deque
+from collections import Counter, deque
 from datetime import datetime
 import json
 from pathlib import Path
@@ -26,6 +26,7 @@ if str(ROOT) not in sys.path:
 from scripts import eval_mujoco_gr00t_genie1 as protocol
 from scripts.collect_a2d_physics_lerobot import legacy, make_scene, write_json
 from scripts.a2d_closed_loop import update_prescribed_arm_constraints, loop_error_m
+from scripts.a2d_dice_orientation import dice_quaternion
 from scripts.a2d_batch import _is_descendant
 from scripts.replay_a2d import set_upper_body_pose
 from scripts.replay_a2d_physics import set_robot_target, set_initial_dice_pose
@@ -132,8 +133,8 @@ class PhysicsEnv:
         self.target=np.r_[tr.joint_positions[0],tr.effector_positions[0]].astype(float)
         set_robot_target(self.model,self.data,tr,self.bindings,0.,self.pose,0.,moving=False,
                          gripper=self.gripper,initialize_gripper=True)
-        d=self.record['dice'];yaw=np.deg2rad(d['initial_yaw_deg'])/2
-        set_initial_dice_pose(self.model,self.data,np.array(d['initial_position']),np.array([np.cos(yaw),0,0,np.sin(yaw)]))
+        d=self.record['dice']
+        set_initial_dice_pose(self.model,self.data,np.array(d['initial_position']),dice_quaternion(d))
         mujoco.mj_forward(self.model,self.data)
         for _ in range(round(.4/self.dt)):
             self._target(self.target[:14],np.zeros(14),self.target[14:])
@@ -313,6 +314,23 @@ def run_episode(args,entry,info,report,output,policy):
     return result
 
 
+def save_summary(path, summary):
+    """Count recorded evaluations; scene-only dry runs have no success rate."""
+    episodes = summary['episodes']
+    evaluated = [r for r in episodes if r['status'] not in ('dry_run', 'running')]
+    total = len(evaluated)
+    successes = sum(r.get('success') is True for r in evaluated)
+    summary.update(
+        evaluated_episodes=total,
+        successful_episodes=successes,
+        unsuccessful_episodes=total-successes,
+        success_rate=successes/total if total else None,
+        success_rate_percent=round(100*successes/total, 2) if total else None,
+        status_counts=dict(Counter(r['status'] for r in episodes)),
+    )
+    write_json(path, summary)
+
+
 def main(argv=None):
     args=parse_args(argv);dataset,info,report=load_scenes(args.dataset)
     entries=report['episodes'] if args.all_episodes else [e for e in report['episodes'] if e['lerobot_episode_index']==args.episode_index]
@@ -321,6 +339,7 @@ def main(argv=None):
     output=args.output_dir.expanduser().resolve();output.mkdir(parents=True,exist_ok=False)
     summary={'parameters':{k:str(v) if isinstance(v,Path) else v for k,v in vars(args).items()},
              'dataset':str(dataset),'physics':report['physics'],'episodes':[],
+             'selected_episodes':len(entries),
              'action_order':'left_arm(7),right_arm(7),left_gripper,right_gripper',
              'control':'Interpolated arm position targets with prescribed constraints; direct finite-torque gripper actuator targets; physics paused during network inference'}
     policy=None
@@ -331,12 +350,15 @@ def main(argv=None):
             index=entry['lerobot_episode_index'];sub=output/f'episode_{index:06d}';sub.mkdir()
             print(f'Evaluating test index={index} scene={entry["source_episode"]}',flush=True)
             r=run_episode(args,entry,info,report,sub,policy);summary['episodes'].append(r)
-            write_json(output/'summary.json',summary)
+            save_summary(output/'summary.json',summary)
             print(f'  status={r["status"]} success={r["success"]}',flush=True)
             if r['status'] in ('error','aborted'):break
     finally:
         if policy is not None:policy.close()
-        write_json(output/'summary.json',summary)
+        save_summary(output/'summary.json',summary)
+    if summary['success_rate'] is not None:
+        print(f'Success rate: {summary["successful_episodes"]}/{summary["evaluated_episodes"]} '
+              f'({summary["success_rate_percent"]:.2f}%)', flush=True)
     print(f'Report: {output/"summary.json"}',flush=True)
     return 0 if len(summary['episodes'])==len(entries) and all(r['status'] in ('success','dry_run') for r in summary['episodes']) else 2
 

@@ -13,6 +13,7 @@ from scipy.spatial.transform import Rotation
 from scripts.replay_a2d import (apply_kinematic_pose, EEF_BODY_NAMES,
                                 _pose_in_parent_frame, validate_joint_limits)
 from scripts.collect_a2d_physics_lerobot import snapshots
+from scripts.a2d_dice_orientation import set_up_face, dice_quaternion
 
 
 def transform(position, yaw=0.):
@@ -161,7 +162,7 @@ def grip_relation(model, tr, bindings, pose, record, gripper, anchor):
     raise ValueError('Grip anchor beyond trajectory')
 
 
-def perturb_record(record, dice_xy, dice_yaw_deg, box_xy, box_yaw_deg):
+def perturb_record(record, dice_xy, dice_yaw_deg, box_xy, box_yaw_deg, dice_up_face=None):
     r = copy.deepcopy(record)
     old_dice = transform(record['dice']['initial_position'], np.deg2rad(record['dice']['initial_yaw_deg']))
     new_dice = transform(old_dice[:3, 3] + np.r_[dice_xy, 0],
@@ -171,6 +172,12 @@ def perturb_record(record, dice_xy, dice_yaw_deg, box_xy, box_yaw_deg):
     new_box = transform(old_box[:3, 3] + np.r_[box_xy, 0], np.deg2rad(b['yaw_deg'] + box_yaw_deg))
     r['dice']['initial_position'] = new_dice[:3, 3].tolist()
     r['dice']['initial_yaw_deg'] += float(dice_yaw_deg)
+    if dice_up_face is not None:
+        set_up_face(r['dice'], dice_up_face)
+    elif 'initial_quaternion_wxyz' in record['dice']:
+        q = dice_quaternion(record['dice'])
+        rotated = Rotation.from_euler('z', dice_yaw_deg, degrees=True) * Rotation.from_quat(q[[1, 2, 3, 0]])
+        r['dice']['initial_quaternion_wxyz'] = rotated.as_quat()[[3, 0, 1, 2]].tolist()
     r['box'].update(x=float(new_box[0, 3]), y=float(new_box[1, 3]), yaw_deg=b['yaw_deg'] + float(box_yaw_deg))
     return r, new_dice @ np.linalg.inv(old_dice), new_box @ np.linalg.inv(old_box)
 

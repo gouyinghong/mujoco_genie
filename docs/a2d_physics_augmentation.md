@@ -109,8 +109,14 @@ MUJOCO_GL=egl .venv/bin/python scripts/collect_a2d_physics_lerobot.py \
 ## 泛化评估边界
 
 用骰子和盒子的绝对 X/Y 所在 1 cm 网格及 5° 朝向区间确定场景组，稳定哈希划分
-约 80% train / 20% test。在至少两个来源时，最后一个来源专用于 test，其他来源专用于
-train；采样时同时满足场景组划分，因此训练/测试既没有相同场景组，也没有相同来源。
+约 80% train / 20% test。最终成功样本使用 8:2 配额：每增加一条成功数据，测试条数
+为成功总数的 20% 四舍五入，失败尝试不占配额。成功 200 条即训练 160 条、测试 40 条；
+不足目标时按实际成功数取整。某一组成功率低时，会继续补该组，可能需要增加尝试上限。
+
+在至少两个来源时，按来源顺序将末尾约 20%（至少一条）划给 test，其余划给 train。
+按当前缺少的成功配额选择分组，并在组内轮流使用来源。采样还必须满足场景组哈希划分，
+因此训练/测试既没有相同场景组，也没有相同来源。报告的 `source_pools` 保存实际来源分配。
+位置扰动范围必须能产生两组场景；范围过小无法补足分组时会报错，不把同一场景拆到两边。
 只有一个来源的试运行只能做到场景组隔离，不能做到来源隔离。
 
 这验证的是未见过的局部布局组合，不等于更大范围的空间外推。模型训练、跨区域策略
@@ -145,3 +151,31 @@ train；采样时同时满足场景组划分，因此训练/测试既没有相�
 `collection_report.json`。`coverage.png` 展示布局覆盖，`visual_stages.jpg` 展示实际采集帧。
 27 项相关测试通过；另对试验批次的 25 条保留轨迹使用原 batch 回放，25 条均通过严格标准。
 这些是生成及采集验证，尚未进行模型训练后的策略泛化对照实验。
+
+## 六个面朝上的扩增
+
+增加 `--randomize-dice-face`，在原有位置、水平朝向和外观变化之外，随机选择骰子的朝上面：
+
+```bash
+MUJOCO_GL=egl .venv/bin/python scripts/generate_a2d_physics_augment.py \
+  --attempts 400 --target-successes 200 --seed 5 \
+  --visual-randomization --randomize-dice-face --collect \
+  --max-sources 100 --output-dir datasets/a2d_augmented_v3
+```
+
+使用新的输出目录，已有 v2 数据不会被修改。不开启此选项时保持原来的朝上面。
+
+每 6 次尝试使用独立的、有种子的随机序列，将六个面各安排一次，仍叠加 `--dice-yaw-range-deg` 的水平旋转。每次都以一个面平放在桌面上，不生成棱角支撑的初始姿态。400 次尝试时，各面分配 66 或 67 次；如果提前达到成功目标，尝试数会相应减少。动力学筛选后，各面成功数量不保证相同，也不保证每个来源或 train/test 分别覆盖所有面。
+
+记录中的 `dice.up_face_axis`（`+z/-z/+x/-x/+y/-y`）表示模型局部哪个面的法线朝上，不是点数编号。`dice.initial_quaternion_wxyz` 保存完整初始姿态，physics layout 同步保存 `dice_quaternion_wxyz`；验证、采集、replay 和 GR00T 初始化均读取完整姿态。旧数据没有四元数时继续按原来的 yaw 初始化。
+
+轨迹空间迁移仍依据位置和水平朝向；抓取后的姿态修正会扣除主动翻面的旋转，避免强行让手腕翻转以恢复原来的点数朝上。骰子的碰撞几何和视觉外观随刚体一起旋转，仍必须通过原来的动力学筛选。
+
+查看尝试和成功样本的各面数量：
+
+```bash
+.venv/bin/python scripts/summarize_a2d_augmentation.py \
+  datasets/a2d_augmented_v3/generation_report.json
+```
+
+输出中的 `attempted_face_counts` 和 `accepted_face_counts` 分别对应尝试数和成功数。场景划分仍将相同位置/水平朝向、不同朝上面的样本归在同一场景组，避免仅换一个面就跨入 train/test。

@@ -18,6 +18,7 @@ def summarize(path):
                      'split': c['split'], 'accepted': c['accepted'],
                      'dice_dx_m': c['perturbation']['dice_xy'][0], 'dice_dy_m': c['perturbation']['dice_xy'][1],
                      'dice_yaw_delta_deg': c['perturbation']['dice_yaw_deg'],
+                     'dice_up_face': c['perturbation'].get('dice_up_face', 'unchanged'),
                      'box_dx_m': c['perturbation']['box_xy'][0], 'box_dy_m': c['perturbation']['box_xy'][1],
                      'box_yaw_delta_deg': c['perturbation']['box_yaw_deg'],
                      'slip_mm': m.get('max_dice_translation_in_gripper_m', np.nan) * 1000,
@@ -42,6 +43,8 @@ def summarize(path):
               'acceptance_rate': len(accepted)/len(rows) if rows else 0,
               'split_counts': dict(Counter(c['split'] for c in accepted)),
               'source_counts': dict(Counter(c['source_episode'] for c in accepted)),
+              'attempted_face_counts': dict(Counter(c['perturbation'].get('dice_up_face', 'unchanged') for c in d['candidates'])),
+              'accepted_face_counts': dict(Counter(c['perturbation'].get('dice_up_face', 'unchanged') for c in accepted)),
               'rejection_reasons': dict(reasons), 'scene_groups_disjoint': True,
               'source_groups_disjoint': source_separated, 'excluded_sources_absent': True,
               'accepted_perturbation_ranges': {}}

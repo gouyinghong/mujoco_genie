@@ -78,3 +78,25 @@ def test_local_policy_rollout_artifacts(scene, tmp_path):
     np.testing.assert_array_equal(data['next_state'][:-1], data['state'][1:])
     assert (tmp_path/'rollout.mp4').stat().st_size > 0
     assert json.loads((tmp_path/'result.json').read_text())['success'] is False
+
+
+def test_summary_success_rate_and_empty_dry_runs(tmp_path):
+    path = tmp_path/'summary.json'
+    summary = {'episodes': ([{'status': 'success', 'success': True}] * 25
+                            + [{'status': 'timeout', 'success': False}] * 43)}
+    ev.save_summary(path, summary)
+    saved = json.loads(path.read_text())
+    assert saved['evaluated_episodes'] == 68
+    assert saved['successful_episodes'] == 25
+    assert saved['unsuccessful_episodes'] == 43
+    assert saved['success_rate'] == pytest.approx(25/68)
+    assert saved['success_rate_percent'] == 36.76
+    assert saved['status_counts'] == {'success': 25, 'timeout': 43}
+    for episodes in ([], [{'status': 'dry_run', 'success': False}]):
+        ev.save_summary(path, {'episodes': episodes})
+        saved = json.loads(path.read_text())
+        assert saved['evaluated_episodes'] == 0
+        assert saved['success_rate'] is None
+        assert saved['success_rate_percent'] is None
+    ev.save_summary(path, {'episodes': [{'status': 'error', 'success': False}]})
+    assert json.loads(path.read_text())['success_rate'] == 0

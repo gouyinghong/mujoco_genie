@@ -114,6 +114,8 @@ def prepare(manifest_path: Path, episode: str, output_dir: Path,
         "dice_yaw_deg": record["dice"]["initial_yaw_deg"],
         "gripper_control": "closed-loop",
     }}}}
+    if 'initial_quaternion_wxyz' in record['dice']:
+        layout['datasets'][output_dir.name][episode]['dice_quaternion_wxyz'] = record['dice']['initial_quaternion_wxyz']
     layout_path.write_text(json.dumps(layout, indent=2) + "\n")
     document = {key: copy.deepcopy(manifest[key]) for key in ("schema", "model", "fixed_torso")}
     document.update(dataset_dir=str(output_dir), summary=str(output_dir / "retarget_summary.json"),

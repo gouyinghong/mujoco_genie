@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts import collect_a2d_lerobot as legacy
+from scripts.a2d_dice_orientation import dice_quaternion
 from scripts.a2d_batch import fixed_upper_body_pose, load_corrected_trajectory
 from scripts.a2d_closed_loop import ClosedLoopGripper, load_physics_model
 from scripts.prepare_a2d_grasp_hold import prepare
@@ -110,9 +111,8 @@ def snapshots(model, tr, bindings, pose, record, gripper, fps, post_rollout_s):
         set_robot_target(model, data, tr, bindings, t, pose, 0,
                          moving=moving, gripper=gripper, initialize_gripper=initialize)
     target(0, False, True)
-    yaw = np.deg2rad(record['dice']['initial_yaw_deg']) / 2
     set_initial_dice_pose(model, data, np.array(record['dice']['initial_position']),
-                          np.array([np.cos(yaw), 0, 0, np.sin(yaw)]))
+                          dice_quaternion(record['dice']))
     mujoco.mj_forward(model, data)
     dt = float(model.opt.timestep)
     for _ in range(round(.4 / dt)):
@@ -176,7 +176,7 @@ def main(argv=None):
             metrics = candidate_metrics(model, tr, bindings, pose, plan,
                                         np.array(r['dice']['initial_position']), r['dice']['initial_yaw_deg'],
                                         settle_time_s=.4, min_gripper_openness=0, gripper=gripper,
-                                        post_rollout_s=args.post_rollout_s)
+                                        post_rollout_s=args.post_rollout_s, initial_quaternion=dice_quaternion(r['dice']))
             if dataset is None:
                 joint_names = tr.joint_names
                 dataset = LeRobotDataset.create(repo_id=args.repo_id, fps=args.fps,

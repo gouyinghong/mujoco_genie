@@ -105,3 +105,23 @@ def test_quality_rejects_accidental_landing_without_grasp():
              carry_support_contact_fraction=0., max_robot_support_penetration_m=0.,
              physics_warnings=0, max_loop_error_m=0., max_dice_speed_m_s=1.)
     assert {'poor_carry_contact','poor_retention','contact_loss','slip'} <= set(quality(d))
+
+
+def test_success_quota_stays_eighty_twenty_despite_failures():
+    from scripts.generate_a2d_physics_augment import next_split, source_pools
+    accepted = []
+    pools = source_pools(31)
+    assert len(pools['test']) == 6
+    assert set(pools['train']).isdisjoint(pools['test'])
+    assert sorted(pools['train'] + pools['test']) == list(range(31))
+    assert source_pools(2) == {'train': [0], 'test': [1]}
+    assert source_pools(1) == {'train': [0], 'test': [0]}
+    for _ in range(200):
+        split = next_split(accepted)
+        # A run of rejected candidates must not consume successes in either pool.
+        for _ in range(4 if split == 'test' else 1):
+            assert next_split(accepted) == split
+        accepted.append({'split': split})
+        assert sum(x['split'] == 'test' for x in accepted) == int(len(accepted) * .2 + .5)
+    assert sum(x['split'] == 'train' for x in accepted) == 160
+    assert sum(x['split'] == 'test' for x in accepted) == 40

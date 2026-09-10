@@ -107,6 +107,7 @@ def candidate_metrics(
     min_gripper_openness: float,
     gripper: ClosedLoopGripper | None = None,
     post_rollout_s: float | None = None,
+    initial_quaternion: np.ndarray | None = None,
 ) -> dict[str, Any]:
     data = mujoco.MjData(model)
     set_robot_target(
@@ -126,6 +127,8 @@ def candidate_metrics(
         (np.cos(yaw_rad / 2.0), 0.0, 0.0, np.sin(yaw_rad / 2.0)),
         dtype=float,
     )
+    if initial_quaternion is not None:
+        quaternion = np.asarray(initial_quaternion, dtype=float)
     set_initial_dice_pose(model, data, position, quaternion)
     mujoco.mj_forward(model, data)
 

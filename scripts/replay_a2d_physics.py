@@ -428,6 +428,9 @@ def main() -> None:
             dtype=float,
         )
 
+    if physics_layout is not None and 'dice_quaternion_wxyz' in physics_layout:
+        initial_dice_quaternion = np.asarray(physics_layout['dice_quaternion_wxyz'], dtype=float)
+
     data = mujoco.MjData(model)
 
     def reset() -> None:
@@ -512,7 +515,7 @@ def main() -> None:
             model, trajectory, bindings, upper_body_pose, dice_plan,
             initial_dice_position, float(yaw), settle_time_s=args.settle_time_s,
             min_gripper_openness=args.min_gripper_openness, gripper=gripper,
-            post_rollout_s=args.post_rollout_s,
+            post_rollout_s=args.post_rollout_s, initial_quaternion=initial_dice_quaternion,
         )
         print(json.dumps(metrics, indent=2))
         if args.metrics_output is not None:

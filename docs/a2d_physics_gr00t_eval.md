@@ -74,3 +74,5 @@ MUJOCO_GL=egl .venv/bin/python scripts/eval_a2d_physics_gr00t.py \
 ```bash
 MUJOCO_GL=egl .venv/bin/python -m pytest tests/test_eval_a2d_physics_gr00t.py -q
 ```
+
+`summary.json` 还记录 `selected_episodes`（选中条数）、`evaluated_episodes`（已记录评估条数）、`successful_episodes`、`unsuccessful_episodes`、`success_rate`（0～1）、`success_rate_percent`（百分数，保留两位小数）和 `status_counts`。每条结束及退出时更新，正常退出时终端也打印成功率。分母为已记录的非 dry-run、非 running 结果，包含 timeout/error/aborted/unstable，未执行条目不进入分母；只有 dry-run 或尚无结果时成功率为 null。旧报告不会自动补写这些字段。
