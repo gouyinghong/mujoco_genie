@@ -1,0 +1,33 @@
+[project]
+name = "mujoco-genie"
+version = "0.1.0"
+description = "A2D MuJoCo physics replay, LeRobot collection and remote GR00T evaluation"
+readme = "readme.md"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "mujoco==3.9.0",
+    "numpy==2.2.6",
+    "scipy==1.15.3",
+    "opencv-python==4.12.0.88",
+    "av==15.1.0",
+    "imageio[ffmpeg]==2.37.4",
+    "lerobot==0.4.4",
+    "torch==2.10.0",
+    "torchvision==0.25.0",
+    "torchcodec==0.10.0",
+    "pyzmq==27.1.0",
+    "msgpack==1.1.1",
+    "msgpack-numpy==0.4.8",
+]
+
+[dependency-groups]
+dev = ["pytest==9.1.1"]
+
+[tool.uv]
+package = false
+required-version = ">=0.12.0"
+# Deployment target used by the A2D GUI/EGL collection pipeline.
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+# LeRobot requests headless OpenCV, but both wheels install the same cv2 module.
+# The GUI wheel provides the same APIs plus imshow for --preview.
+exclude-dependencies = ["opencv-python-headless"]

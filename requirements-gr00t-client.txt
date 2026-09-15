@@ -1,4 +1,0 @@
-# Client-side dependencies for scripts/eval_mujoco_gr00t_genie1.py.
-pyzmq==27.1.0
-msgpack==1.1.1
-msgpack-numpy==0.4.8
