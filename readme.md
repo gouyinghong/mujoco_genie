@@ -174,6 +174,75 @@ MUJOCO_GL=egl .venv/bin/python scripts/eval_a2d_physics_gr00t.py \
 
 ## 常用命令：动力学示范 replay
 
+### 1. 单条动力学回放
+
+使用 `replay_a2d_physics.py` 查看指定示范的动力学回放：
+
+```bash
+.venv/bin/python scripts/replay_a2d_physics.py \
+  --manifest datasets/replay_layouts.json \
+  --episode episode_000000.npz \
+  --arm-contact-mode constrained \
+  --physics-timestep 0.0005 \
+  --contact-impratio 100 \
+  --gripper-close-bias 0 \
+  --gripper-sliding-friction 3 \
+  --gripper-release-mode fast \
+  --dice-linear-damping 0.02 \
+  --dice-angular-damping 0.0005 \
+  --start-immediately
+```
+
+这是实际调用 `mj_step` 的动力学仿真：双臂按照示范轨迹做受接触约束的规定运动，
+每只夹爪由一个有限力矩驱动器和机械联动约束控制；骰子仅在 reset 时设置一次位姿，
+之后完全由重力、接触和摩擦决定，不会绑定到夹爪或使用脚本生成下落轨迹。
+
+不写 `--start-immediately` 时，窗口会停在初始状态，按空格开始。播放过程中
+`SPACE` 暂停/继续，`ENTER` 重置当前 episode。`--speed` 只改变墙钟播放速度，
+不会改变物理步长；例如慢速查看：
+
+```bash
+.venv/bin/python scripts/replay_a2d_physics.py \
+  --manifest datasets/replay_layouts.json \
+  --episode-index 0 \
+  --speed 0.25 \
+  --arm-contact-mode constrained \
+  --physics-timestep 0.0005 \
+  --contact-impratio 100 \
+  --gripper-close-bias 0 \
+  --gripper-sliding-friction 3 \
+  --dice-linear-damping 0.02 \
+  --dice-angular-damping 0.0005
+```
+
+`--episode-index` 是 `replay_layouts.json` 中 `status=ok` 记录的从零开始索引；
+更推荐使用 `--episode episode_xxxxxx.npz` 明确指定文件。需要查看碰撞几何和接触点时
+增加 `--show-collision`。
+
+无窗口运行同一条轨迹并保存确定性物理指标：
+
+```bash
+.venv/bin/python scripts/replay_a2d_physics.py \
+  --manifest datasets/replay_layouts.json \
+  --episode episode_000000.npz \
+  --arm-contact-mode constrained \
+  --physics-timestep 0.0005 \
+  --contact-impratio 100 \
+  --gripper-close-bias 0 \
+  --gripper-sliding-friction 3 \
+  --gripper-release-mode fast \
+  --dice-linear-damping 0.02 \
+  --dice-angular-damping 0.0005 \
+  --headless \
+  --metrics-output logs/episode_000000_physics.json
+```
+
+`--metrics-output` 为防止误覆盖而要求目标文件尚不存在。单条脚本直接使用 manifest
+中已有的轨迹时序；如果需要先插入“原地缓慢闭合并保持”的处理阶段，使用下面的
+批量入口，它会为每条示范创建独立处理副本。
+
+### 2. 批量动力学回放
+
 查看原始示范经过闭合时间处理后的动力学回放：
 
 ```bash
