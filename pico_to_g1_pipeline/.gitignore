@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+ego2robot/__pycache__/
+data/
+work/
+outputs/
+manifests/*.sha256

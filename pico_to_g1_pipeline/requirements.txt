@@ -1,0 +1,6 @@
+numpy==2.2.6
+scipy==1.15.3
+pyarrow==25.0.0
+lerobot==0.4.4
+av==15.1.0
+pin==4.1.0
