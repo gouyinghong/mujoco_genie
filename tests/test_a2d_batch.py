@@ -9,8 +9,11 @@ import pytest
 from scripts.a2d_batch import (
     DEFAULT_BODY_LIFT_M,
     DEFAULT_BODY_PITCH_RAD,
+    DEFAULT_RETARGET_DATASET,
+    GRIPPER_ADJUSTMENT_SCHEMA,
     LAYOUT_SCHEMA,
     choose_dice_center_frame,
+    load_gripper_boundaries,
     load_layout_overrides,
     placement_lift_profile,
     prepare_dataset_layouts,
@@ -18,9 +21,33 @@ from scripts.a2d_batch import (
 from scripts.convert_a2d_to_mjcf import DEFAULT_A2D_URDF, convert_a2d_urdf_to_mjcf
 
 
-DATASET = Path(
-    "datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return"
-)
+DATASET = DEFAULT_RETARGET_DATASET
+
+
+def test_gripper_boundaries_are_loaded_from_new_episode_report(tmp_path: Path) -> None:
+    episode = tmp_path / "episode_000000.npz"
+    episode.touch()
+    expected = {
+        "close_start_frame": 10,
+        "close_end_frame": 20,
+        "open_start_frame": 30,
+        "open_end_frame": 40,
+    }
+    report = {
+        "frames": 50,
+        "gripper_adjustment": {
+            "schema": GRIPPER_ADJUSTMENT_SCHEMA,
+            "boundaries": expected,
+        },
+    }
+    episode.with_name("episode_000000_report.json").write_text(
+        json.dumps(report), encoding="utf-8"
+    )
+    episode.with_name("episode_000000_gripper_adjustment.json").write_text(
+        json.dumps({"boundaries": {}}), encoding="utf-8"
+    )
+
+    assert load_gripper_boundaries(episode) == expected
 
 
 def test_layout_overrides_are_optional_and_loaded_by_episode(
@@ -140,7 +167,7 @@ def test_reference_episode_batch_layout_matches_tuned_replay(
     assert record["metrics"]["box_wall_contacts"] == 0
     np.testing.assert_allclose(
         (record["box"]["x"], record["box"]["y"], record["box"]["yaw_deg"]),
-        (0.6456328025, 0.0400075739, 0.0),
+        (0.647699, 0.043614, 0.0),
         atol=3e-3,
     )
     cache_path = tmp_path / record["cache"]

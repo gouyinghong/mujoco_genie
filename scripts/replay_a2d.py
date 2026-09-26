@@ -30,7 +30,10 @@ from scripts.convert_a2d_to_mjcf import (  # noqa: E402
 )
 
 
-DEFAULT_DATASET_DIR = REPO_ROOT / "datasets" / "fixed_spine3_to_g1_add_effector"
+DEFAULT_DATASET_DIR = (
+    REPO_ROOT
+    / "pico_to_g1_pipeline/outputs/fixed_spine3_to_g1_0723_complete"
+)
 DEFAULT_EPISODE = DEFAULT_DATASET_DIR / "episode_000000.npz"
 DEFAULT_SUMMARY = DEFAULT_DATASET_DIR / "retarget_summary.json"
 ARM_BASE_BODY = "link-arm"

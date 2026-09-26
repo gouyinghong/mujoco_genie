@@ -6,6 +6,7 @@ import pytest
 from scripts.a2d_batch import (
     DEFAULT_BODY_LIFT_M,
     DEFAULT_BODY_PITCH_RAD,
+    DEFAULT_RETARGET_DATASET,
     _right_gripper_center_at_frame,
     fixed_upper_body_pose,
     robot_table_metrics,
@@ -17,9 +18,7 @@ from scripts.optimize_a2d_fixed_torso import (
 from scripts.replay_a2d import bind_joints, load_trajectory
 
 
-DATASET = Path(
-    "datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return"
-)
+DATASET = DEFAULT_RETARGET_DATASET
 MODEL_PATH = Path("assets/A2D_Omnipicker/A2D_with_box.xml")
 
 
@@ -66,8 +65,8 @@ def test_table_metrics_detect_episode_15_penetration() -> None:
         fixed_upper_body_pose(DEFAULT_BODY_LIFT_M, DEFAULT_BODY_PITCH_RAD),
     )
 
-    assert metrics["contact_frames"] == 4
+    assert metrics["contact_frames"] == 3
     assert metrics["first_contact_frame"] == 28
-    assert metrics["deepest_contact_frame"] == 30
+    assert metrics["deepest_contact_frame"] == 29
     assert metrics["deepest_body"] == "right_narrow4_Link"
-    assert metrics["max_penetration_m"] == pytest.approx(0.0196758073, abs=1e-9)
+    assert metrics["max_penetration_m"] == pytest.approx(0.0126099032, abs=1e-9)

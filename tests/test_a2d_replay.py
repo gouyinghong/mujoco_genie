@@ -317,7 +317,7 @@ def test_interpolation_uses_dataset_timestamps() -> None:
 
 
 def test_replay_time_reports_trajectory_and_source_frames() -> None:
-    dataset = Path("datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm")
+    dataset = Path("pico_to_g1_pipeline/outputs/fixed_spine3_to_g1_0723_complete")
     trajectory = load_trajectory(
         dataset / "episode_000000.npz", dataset / "retarget_summary.json"
     )
@@ -337,14 +337,14 @@ def test_grasp_event_and_dice_pick_place(
     _, model = converted_a2d_model
     trajectory = load_trajectory(DEFAULT_EPISODE, DEFAULT_SUMMARY)
     bindings = bind_joints(model, trajectory.joint_names)
-    assert infer_grasp_frames(trajectory) == (1, 54, 75)
+    assert infer_grasp_frames(trajectory) == (1, 31, 73)
 
     plan = build_dice_replay_plan(model, trajectory, bindings)
     assert plan is not None
     assert plan.side == "right"
     np.testing.assert_allclose(
         plan.initial_position,
-        (0.6988463543, 0.1164891874, 0.9892485517),
+        (0.7829626892, -0.0961581924, 0.8910232761),
         atol=1e-9,
     )
     np.testing.assert_array_equal(
@@ -352,7 +352,7 @@ def test_grasp_event_and_dice_pick_place(
     )
     np.testing.assert_allclose(
         plan.landing_position,
-        (0.7163038805, 0.1357286645, DICE_TABLE_CENTER_Z),
+        (0.6472271958, 0.0682514306, DICE_TABLE_CENTER_Z),
         atol=1e-9,
     )
 
@@ -382,7 +382,7 @@ def test_dice_on_table_with_safe_body_lift_has_continuous_grasp(
     converted_a2d_model: tuple[Path, mujoco.MjModel],
 ) -> None:
     _, model = converted_a2d_model
-    dataset = Path("datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm")
+    dataset = Path("pico_to_g1_pipeline/outputs/fixed_spine3_to_g1_0723_complete")
     trajectory = load_trajectory(
         dataset / "episode_000000.npz", dataset / "retarget_summary.json"
     )
@@ -435,7 +435,7 @@ def test_dice_can_align_faces_with_gripper_closing_axis(
     converted_a2d_model: tuple[Path, mujoco.MjModel],
 ) -> None:
     _, model = converted_a2d_model
-    dataset = Path("datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm")
+    dataset = Path("pico_to_g1_pipeline/outputs/fixed_spine3_to_g1_0723_complete")
     trajectory = load_trajectory(
         dataset / "episode_000000.npz", dataset / "retarget_summary.json"
     )
@@ -455,7 +455,7 @@ def test_dice_can_align_faces_with_gripper_closing_axis(
     assert plan is not None
 
     assert np.degrees(plan.initial_yaw_rad) == pytest.approx(
-        -20.939640454, abs=1e-6
+        -20.5933787114, abs=1e-6
     )
 
     np.testing.assert_allclose(
@@ -477,7 +477,7 @@ def test_dice_xy_can_use_frame_37_fingertip_center(
     converted_a2d_model: tuple[Path, mujoco.MjModel],
 ) -> None:
     _, model = converted_a2d_model
-    dataset = Path("datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm")
+    dataset = Path("pico_to_g1_pipeline/outputs/fixed_spine3_to_g1_0723_complete")
     trajectory = load_trajectory(
         dataset / "episode_000000.npz", dataset / "retarget_summary.json"
     )
@@ -500,11 +500,11 @@ def test_dice_xy_can_use_frame_37_fingertip_center(
     assert plan.position_frame == 37
     np.testing.assert_allclose(
         plan.initial_position,
-        (0.7631501794, -0.1131776553, DICE_TABLE_CENTER_Z),
+        (0.7650962004, -0.1158210821, DICE_TABLE_CENTER_Z),
         atol=1e-6,
     )
     assert np.degrees(plan.initial_yaw_rad) == pytest.approx(
-        -20.939640454, abs=1e-6
+        -20.5933787114, abs=1e-6
     )
 
 
@@ -512,7 +512,7 @@ def test_dice_xy_offset_moves_table_pose_without_changing_height(
     converted_a2d_model: tuple[Path, mujoco.MjModel],
 ) -> None:
     _, model = converted_a2d_model
-    dataset = Path("datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm")
+    dataset = Path("pico_to_g1_pipeline/outputs/fixed_spine3_to_g1_0723_complete")
     trajectory = load_trajectory(
         dataset / "episode_000000.npz", dataset / "retarget_summary.json"
     )
@@ -543,7 +543,7 @@ def test_dice_xy_offset_moves_table_pose_without_changing_height(
     )
 
 
-def test_return_trajectory_reports_simplified_fingertip_wall_contacts(
+def test_new_return_trajectory_avoids_simplified_fingertip_wall_contacts(
     tmp_path: Path,
 ) -> None:
     model_path = tmp_path / "with_box.xml"
@@ -554,7 +554,7 @@ def test_return_trajectory_reports_simplified_fingertip_wall_contacts(
     )
     model = mujoco.MjModel.from_xml_path(str(model_path))
     dataset = Path(
-        "datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return"
+        "pico_to_g1_pipeline/outputs/fixed_spine3_to_g1_0723_complete"
     )
     trajectory = load_trajectory(
         dataset / "episode_000000.npz", dataset / "retarget_summary.json"
@@ -577,7 +577,7 @@ def test_return_trajectory_reports_simplified_fingertip_wall_contacts(
 
     np.testing.assert_allclose(
         plan.landing_position,
-        (0.6455677518, 0.0398147831, 0.832),
+        (0.6476980610, 0.0434957074, 0.832),
         atol=3e-3,
     )
     wall_ids = {
@@ -611,9 +611,7 @@ def test_return_trajectory_reports_simplified_fingertip_wall_contacts(
             for contact in data.contact
         ):
             wall_contact_frames.append(frame)
-    # Convex-mesh contact generation can include the immediately adjacent
-    # frame depending on hull ordering, while the sustained contact is stable.
-    assert wall_contact_frames in ([70, 71], [69, 70, 71])
+    assert wall_contact_frames == []
 
 
 def test_body_lift_moves_inferred_dice_grasp_position(

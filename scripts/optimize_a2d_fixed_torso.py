@@ -21,6 +21,8 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.a2d_batch import (  # noqa: E402
     DEFAULT_BODY_LIFT_M,
     DEFAULT_BODY_PITCH_RAD,
+    DEFAULT_REPLAY_ROOT,
+    DEFAULT_RETARGET_DATASET,
     _right_gripper_center_at_frame,
     choose_dice_center_frame,
     find_collision_free_box_pose,
@@ -41,9 +43,7 @@ from scripts.replay_a2d import (  # noqa: E402
 )
 
 
-DEFAULT_DATASET = Path(
-    "datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return"
-)
+DEFAULT_DATASET = DEFAULT_RETARGET_DATASET
 REPORT_SCHEMA = "a2d_fixed_torso_optimization.v1"
 IK_TOLERANCE_M = 0.002
 PLACEMENT_LIFTS_M = (0.0, 0.01, 0.02, 0.03, 0.04, 0.05)
@@ -66,7 +66,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("datasets/torso_pose_optimization.json"),
+        default=DEFAULT_REPLAY_ROOT / "torso_pose_optimization.json",
     )
     parser.add_argument("--baseline-body-lift-m", type=float, default=DEFAULT_BODY_LIFT_M)
     parser.add_argument(

@@ -15,14 +15,21 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.a2d_batch import (
     DEFAULT_BODY_LIFT_M,
     DEFAULT_BODY_PITCH_RAD,
+    DEFAULT_REPLAY_MANIFEST,
+    DEFAULT_RETARGET_DATASET,
     prepare_dataset_layouts,
 )
 from scripts.convert_a2d_to_mjcf import DEFAULT_A2D_WITH_BOX_MJCF
 
 
-DEFAULT_DATASET = Path(
-    "datasets/fixed_spine3_to_g1_0723_add_effector_gripper_6cm_return"
-)
+DEFAULT_DATASET = DEFAULT_RETARGET_DATASET
+
+
+def default_output_path(dataset_dir: Path) -> Path:
+    dataset_dir = dataset_dir.expanduser().resolve()
+    if dataset_dir == DEFAULT_RETARGET_DATASET.resolve():
+        return DEFAULT_REPLAY_MANIFEST
+    return dataset_dir.parent / f"{dataset_dir.name}_replay" / "replay_layouts.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,7 +61,7 @@ def main() -> None:
     args = parse_args()
     if args.episodes and args.max_episodes is not None:
         raise ValueError("--episode and --max-episodes cannot be used together")
-    output = args.output or args.dataset_dir.parent / "replay_layouts.json"
+    output = args.output or default_output_path(args.dataset_dir)
     result = prepare_dataset_layouts(
         args.model,
         args.dataset_dir,

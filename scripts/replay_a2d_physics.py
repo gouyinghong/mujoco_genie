@@ -27,6 +27,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.a2d_batch import (  # noqa: E402
+    DEFAULT_PHYSICS_LAYOUT,
+    DEFAULT_REPLAY_MANIFEST,
     LAYOUT_SCHEMA,
     fixed_upper_body_pose,
     load_corrected_trajectory,
@@ -52,8 +54,7 @@ from scripts.replay_a2d import (  # noqa: E402
 )
 
 
-DEFAULT_MANIFEST = Path("datasets/replay_layouts.json")
-DEFAULT_PHYSICS_LAYOUT = Path("datasets/physics_replay_layouts.json")
+DEFAULT_MANIFEST = DEFAULT_REPLAY_MANIFEST
 PHYSICS_LAYOUT_SCHEMA = "a2d_physics_replay_layouts.v1"
 
 
@@ -68,7 +69,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument(
         "--physics-layout", type=Path,
-        help="Defaults to the manifest's physics_layout or datasets/physics_replay_layouts.json",
+        help="Defaults to the physics_layout stored in the prepared manifest",
     )
     parser.add_argument(
         "--ignore-physics-layout",

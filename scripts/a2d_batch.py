@@ -25,7 +25,21 @@ from scripts.replay_a2d import (
 )
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_RETARGET_DATASET = (
+    REPO_ROOT
+    / "pico_to_g1_pipeline/outputs/fixed_spine3_to_g1_0723_complete"
+)
+DEFAULT_REPLAY_ROOT = (
+    REPO_ROOT
+    / "pico_to_g1_pipeline/outputs/fixed_spine3_to_g1_0723_complete_replay"
+)
+DEFAULT_REPLAY_MANIFEST = DEFAULT_REPLAY_ROOT / "replay_layouts.json"
+DEFAULT_PHYSICS_LAYOUT = DEFAULT_REPLAY_ROOT / "physics_replay_layouts.json"
+
 LAYOUT_SCHEMA = "a2d_fixed_torso_batch_replay.v1"
+RETARGET_SUMMARY_SCHEMA = "fixed_spine3_to_g1_retarget.v1"
+GRIPPER_ADJUSTMENT_SCHEMA = "retargeted_gripper_height_adjustment.v3"
 DEFAULT_BODY_LIFT_M = 0.264496
 DEFAULT_BODY_PITCH_RAD = 0.387295
 BOX_INNER_HALF_SIZE_M = np.array((0.116, 0.076), dtype=float)
@@ -128,22 +142,52 @@ def robot_table_metrics(
     }
 
 
-def adjustment_path(episode_path: Path) -> Path:
-    return episode_path.with_name(f"{episode_path.stem}_gripper_adjustment.json")
+def episode_report_path(episode_path: Path) -> Path:
+    return episode_path.with_name(f"{episode_path.stem}_report.json")
 
 
 def load_gripper_boundaries(episode_path: Path) -> dict[str, int]:
-    path = adjustment_path(episode_path)
+    """Load grasp/release boundaries from the canonical retarget report."""
+
+    path = episode_report_path(episode_path)
     if not path.is_file():
-        raise FileNotFoundError(f"Missing gripper adjustment metadata: {path}")
+        raise FileNotFoundError(f"Missing retarget episode report: {path}")
     with path.open("r", encoding="utf-8") as stream:
         document = json.load(stream)
+    adjustment = document.get("gripper_adjustment")
+    if not isinstance(adjustment, dict):
+        raise ValueError(f"{path} has no gripper_adjustment object")
+    if adjustment.get("schema") != GRIPPER_ADJUSTMENT_SCHEMA:
+        raise ValueError(
+            f"Unsupported gripper adjustment schema in {path}: "
+            f"{adjustment.get('schema')!r}; expected {GRIPPER_ADJUSTMENT_SCHEMA!r}"
+        )
     required = ("close_start_frame", "close_end_frame", "open_start_frame", "open_end_frame")
-    boundaries = document.get("boundaries", {})
+    boundaries = adjustment.get("boundaries", {})
     missing = [name for name in required if name not in boundaries]
     if missing:
         raise ValueError(f"{path} is missing boundary fields: {missing}")
-    return {name: int(boundaries[name]) for name in required}
+    if any(
+        isinstance(boundaries[name], bool) or not isinstance(boundaries[name], int)
+        for name in required
+    ):
+        raise ValueError(f"{path} boundary fields must be integers")
+    result = {name: int(boundaries[name]) for name in required}
+    frames = document.get("frames")
+    if isinstance(frames, bool) or not isinstance(frames, int) or frames < 2:
+        raise ValueError(f"{path} has an invalid frames value: {frames!r}")
+    if not (
+        0
+        <= result["close_start_frame"]
+        < result["close_end_frame"]
+        <= result["open_start_frame"]
+        < result["open_end_frame"]
+        < frames
+    ):
+        raise ValueError(
+            f"{path} has invalid gripper boundaries for {frames} frames: {result}"
+        )
+    return result
 
 
 def load_layout_overrides(dataset_dir: Path) -> dict[str, dict[str, Any]]:
@@ -502,6 +546,15 @@ def prepare_dataset_layouts(
     model_path = model_path.expanduser().resolve()
     output_path = output_path.expanduser().resolve()
     summary_path = dataset_dir / "retarget_summary.json"
+    if not summary_path.is_file():
+        raise FileNotFoundError(f"Missing retarget summary: {summary_path}")
+    with summary_path.open("r", encoding="utf-8") as stream:
+        summary = json.load(stream)
+    if summary.get("schema") != RETARGET_SUMMARY_SCHEMA:
+        raise ValueError(
+            f"Unsupported retarget summary schema in {summary_path}: "
+            f"{summary.get('schema')!r}; expected {RETARGET_SUMMARY_SCHEMA!r}"
+        )
     all_episodes = sorted(dataset_dir.glob("episode_*.npz"))
     if not all_episodes:
         raise FileNotFoundError(f"No episode_*.npz files found in {dataset_dir}")
@@ -780,6 +833,9 @@ def prepare_dataset_layouts(
         "dataset_dir": str(dataset_dir),
         "model": str(model_path),
         "summary": str(summary_path),
+        "physics_layout": str(
+            (output_path.parent / "physics_replay_layouts.json").resolve()
+        ),
         "fixed_torso": {
             "body_lift_m": body_lift_m,
             "body_pitch_rad": body_pitch_rad,
